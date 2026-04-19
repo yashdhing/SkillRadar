@@ -178,7 +178,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Booted the backend with `uvicorn` and verified `GET /health` returned `{"status":"ok"}`.
   - Booted the frontend with `next dev` and verified `GET /` returned `HTTP/1.1 200 OK`.
 - Commits:
-  - Pending
+  - `1b12061` - Initialize SkillRadar app skeleton
 - New Insights / Plan Updates:
   - Dependency installation was required even for the initial skeleton, so user approval was needed before proceeding with package setup.
   - Root workspace `node_modules/` should be ignored because npm workspaces hoist dependencies there.
