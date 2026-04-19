@@ -1,0 +1,2 @@
+"""SkillRadar backend package."""
+

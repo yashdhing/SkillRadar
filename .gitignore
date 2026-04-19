@@ -1,0 +1,17 @@
+.DS_Store
+.idea/
+.next
+.pytest_cache
+.ruff_cache
+.venv
+*.pyc
+*.tsbuildinfo
+__pycache__/
+backend/.venv/
+backend/dist/
+backend/*.egg-info/
+backend/src/*.egg-info/
+backend/.ruff_cache/
+node_modules/
+frontend/.next/
+frontend/node_modules/
