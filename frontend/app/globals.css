@@ -28,10 +28,69 @@ body {
   min-height: 100vh;
 }
 
-.page-shell {
-  width: min(1040px, calc(100% - 3rem));
+.app-frame {
+  width: min(1200px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: 4rem 0 5rem;
+  padding: 1.25rem 0 4rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.app-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 4vw, 2.75rem);
+  line-height: 1.05;
+}
+
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.nav-link,
+.secondary-button,
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.75rem 1rem;
+  text-decoration: none;
+  font-size: 0.95rem;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.nav-link,
+.secondary-button {
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--text);
+}
+
+.primary-button {
+  border: none;
+  background: var(--accent);
+  color: white;
+}
+
+.nav-link:hover,
+.secondary-button:hover,
+.primary-button:hover {
+  transform: translateY(-1px);
+}
+
+.page-shell {
+  width: 100%;
 }
 
 .hero-card,
@@ -58,6 +117,7 @@ body {
 
 h1,
 h2,
+h3,
 p,
 ul {
   margin-top: 0;
@@ -71,7 +131,10 @@ h1 {
 
 .lede,
 .panel p,
-.panel li {
+.panel li,
+.mode-card p,
+.reader-content p,
+.reader-sidebar p {
   color: var(--muted);
   font-size: 1.05rem;
   line-height: 1.7;
@@ -81,7 +144,15 @@ h1 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.25rem;
-  margin-top: 1.25rem;
+}
+
+.home-grid {
+  align-items: start;
+}
+
+.section-stack {
+  display: grid;
+  gap: 1.25rem;
 }
 
 .panel {
@@ -93,18 +164,110 @@ h1 {
   margin-bottom: 0;
 }
 
+.mode-list,
+.lesson-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.mode-list {
+  margin-top: 1.5rem;
+}
+
+.mode-card,
+.lesson-card {
+  border: 1px solid rgba(66, 52, 35, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 1.15rem;
+}
+
+.inline-actions,
+.lesson-card-meta,
+.lesson-card-footer,
+.reader-meta,
+.sidebar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.inline-actions,
+.lesson-card-footer,
+.sidebar-actions {
+  margin-top: 1rem;
+}
+
+.pill,
+.muted-inline {
+  font-size: 0.92rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  background: rgba(164, 77, 39, 0.12);
+  color: var(--accent);
+}
+
+.muted-inline {
+  color: var(--muted);
+}
+
+.text-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
+}
+
+.reader-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.reader-sidebar {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+}
+
+.reader-section + .reader-section {
+  margin-top: 1.5rem;
+}
+
+.toc-list,
+.source-list {
+  margin: 1rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.compact {
+  font-size: 1rem;
+}
+
 @media (max-width: 760px) {
-  .page-shell {
-    width: min(100% - 1.5rem, 1040px);
-    padding-top: 2rem;
+  .app-frame {
+    width: min(100% - 1rem, 1200px);
   }
 
+  .app-header,
   .content-grid {
     grid-template-columns: 1fr;
   }
 
-  h1 {
-    line-height: 1.05;
+  .app-header,
+  .reader-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-sidebar {
+    position: static;
   }
 }
-

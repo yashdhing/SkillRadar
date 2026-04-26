@@ -1,39 +1,83 @@
+import Link from "next/link";
+
+import { libraryLessons } from "./data/mock-lessons";
+
 const generationModes = [
-  "Continue current lesson",
-  "Discover something new",
-  "Generate from a phrase",
+  {
+    title: "Continue current",
+    description: "Follow the active lesson into the next practical layer.",
+  },
+  {
+    title: "Discover something new",
+    description: "Branch into a fresh, career-useful topic.",
+  },
+  {
+    title: "From phrase",
+    description: "Start from a phrase such as Kafka exactly-once in practice.",
+  },
 ];
 
 export default function HomePage() {
+  const activeLesson = libraryLessons.find((lesson) => lesson.isActive);
+
   return (
     <main className="page-shell">
-      <section className="hero-card">
-        <p className="eyebrow">SkillRadar</p>
-        <h1>Grounded lesson generation for focused SDE3 study sessions.</h1>
-        <p className="lede">
-          The app skeleton is ready for generation flows, lesson reading, and
-          library navigation without locking us into premature UI complexity.
-        </p>
-      </section>
-
-      <section className="content-grid">
-        <article className="panel">
-          <h2>Planned Generate Flow</h2>
-          <ul>
-            {generationModes.map((mode) => (
-              <li key={mode}>{mode}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="panel">
-          <h2>Backend Status</h2>
-          <p>
-            FastAPI is scaffolded with a health endpoint and API prefix so the
-            next tasks can layer persistence and orchestration cleanly.
+      <div className="content-grid home-grid">
+        <section className="hero-card">
+          <p className="eyebrow">Generate</p>
+          <h2>Use one focused control surface for the next lesson.</h2>
+          <p className="lede">
+            This view is now the dedicated generate surface. Later tasks can
+            wire real request submission into the same structure.
           </p>
-        </article>
-      </section>
+
+          <div className="mode-list">
+            {generationModes.map((mode) => (
+              <article key={mode.title} className="mode-card">
+                <h3>{mode.title}</h3>
+                <p>{mode.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="section-stack">
+          <article className="panel">
+            <p className="eyebrow">Current Active Lesson</p>
+            {activeLesson ? (
+              <>
+                <h2>{activeLesson.title}</h2>
+                <p className="lede compact">{activeLesson.summary}</p>
+                <div className="inline-actions">
+                  <span className="pill">{activeLesson.topicLabel}</span>
+                  <Link
+                    href={`/lessons/${activeLesson.id}`}
+                    className="secondary-button"
+                  >
+                    Open reader
+                  </Link>
+                </div>
+              </>
+            ) : (
+              <p className="lede compact">
+                No active lesson yet. Later tasks will connect this state to
+                persistence and explicit activation flows.
+              </p>
+            )}
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">Library Access</p>
+            <h2>Jump back into previous study sessions.</h2>
+            <p className="lede compact">
+              The library route is live with lesson summaries and reader links.
+            </p>
+            <Link href="/library" className="text-link">
+              Browse lesson library
+            </Link>
+          </article>
+        </section>
+      </div>
     </main>
   );
 }

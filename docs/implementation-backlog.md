@@ -248,7 +248,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Keeping the confirmed profile in a dedicated seed-data module gives later personalization tasks a single source to extend without coupling that logic to migrations or request handlers.
 
 ### TASK-004 - Build Minimal Application Shell And Navigation
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-001
 - Goal: Create a simple UI shell for generation, lesson reading, and lesson history.
@@ -262,11 +262,20 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - polished UI
   - advanced search UX
 - Implementation Notes:
-  - Pending
+  - Added a shared app shell with top-level navigation so the frontend now has a stable layout for generate, library, and reader flows.
+  - Turned the home route into a dedicated generate-focused screen with active-lesson summary and library entry points, while keeping generation behavior intentionally non-functional until the request-flow task.
+  - Added a lesson library route and a lesson reader route backed by lightweight mock lesson data so the UI now has the required navigation surfaces before backend wiring.
+  - Added reusable mock lesson data structures to keep the shell reviewable and to avoid hardcoding route-specific JSX blobs.
 - Verification:
+  - `npm run frontend:typecheck`
+  - `npm run frontend:lint`
+  - `npm run frontend:build`
+  - Booted the frontend with `npm run frontend:dev` and verified `GET /`, `GET /library`, and `GET /lessons/jvm-latency-investigation` each returned `HTTP/1.1 200 OK`.
+- Commits:
   - Pending
 - New Insights / Plan Updates:
-  - Pending
+  - A small shared mock-lesson module is enough to establish the reader and library UX without prematurely coupling the frontend shell to unfinished generation APIs.
+  - The dedicated generate view can accept real mode selection and request submission later without changing the route structure introduced in this task.
 
 ### TASK-005 - Implement Lesson Generation Request Flow
 - Status: TODO
