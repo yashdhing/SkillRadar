@@ -305,7 +305,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Verified `POST /api/v1/lessons/generate` returned a persisted completed result for `phrase_seeded` mode with request id and lesson id.
   - Verified `GET /` returned `HTTP/1.1 200 OK` while exercising the generate flow locally.
 - Commits:
-  - Pending
+  - `f8e8c70` - Implement the lesson generation request flow
 - New Insights / Plan Updates:
   - The original PostgreSQL default prevented local request-flow verification in this environment because no Postgres service was running; using a repo-local SQLite default for dev keeps the app runnable without blocking the PostgreSQL-backed schema and migration path.
   - A synchronous placeholder lesson creation step is enough to validate the request lifecycle now, while leaving retrieval, topic planning, and composition as explicit future stages instead of collapsing them into this task.
