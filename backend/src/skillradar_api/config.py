@@ -1,14 +1,15 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_SQLITE_PATH = Path(__file__).resolve().parents[2] / "skillradar-dev.db"
 
 
 class Settings(BaseSettings):
     app_name: str = "SkillRadar API"
     api_prefix: str = "/api/v1"
-    database_url: str = (
-        "postgresql+psycopg://skillradar:skillradar@localhost:5432/skillradar"
-    )
+    database_url: str = f"sqlite+pysqlite:///{DEFAULT_SQLITE_PATH}"
 
     model_config = SettingsConfigDict(
         env_prefix="SKILLRADAR_",

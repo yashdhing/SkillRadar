@@ -278,7 +278,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - The dedicated generate view can accept real mode selection and request submission later without changing the route structure introduced in this task.
 
 ### TASK-005 - Implement Lesson Generation Request Flow
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-002, TASK-004
 - Goal: Support submitting lesson-generation requests from the UI in the three required modes.
@@ -291,11 +291,24 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - high-quality lesson generation internals
 - Implementation Notes:
-  - Pending
+  - Added a backend lesson-generation request endpoint that validates the three required modes, persists a `generation_requests` row, and creates a placeholder generated lesson draft for later pipeline replacement.
+  - Kept the request workflow modular by isolating request schemas, API routes, and draft-generation service logic from the future retrieval and agent stages.
+  - Added a client-side generate panel on the home screen with mode selection, conditional phrase input, submit handling, and result-state rendering from the live backend response.
+  - Updated the local backend developer workflow so `make backend-dev` applies migrations before booting, and switched the default dev database to a repo-local SQLite file to keep the flow runnable without requiring local PostgreSQL installation.
 - Verification:
+  - `make backend-lint`
+  - `make backend-test`
+  - `npm run frontend:typecheck`
+  - `npm run frontend:lint`
+  - `npm run frontend:build`
+  - Booted the backend with `make backend-dev` and the frontend with `npm run frontend:dev`.
+  - Verified `POST /api/v1/lessons/generate` returned a persisted completed result for `phrase_seeded` mode with request id and lesson id.
+  - Verified `GET /` returned `HTTP/1.1 200 OK` while exercising the generate flow locally.
+- Commits:
   - Pending
 - New Insights / Plan Updates:
-  - Pending
+  - The original PostgreSQL default prevented local request-flow verification in this environment because no Postgres service was running; using a repo-local SQLite default for dev keeps the app runnable without blocking the PostgreSQL-backed schema and migration path.
+  - A synchronous placeholder lesson creation step is enough to validate the request lifecycle now, while leaving retrieval, topic planning, and composition as explicit future stages instead of collapsing them into this task.
 
 ### TASK-006 - Add Active Lesson State Management
 - Status: TODO

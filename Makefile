@@ -11,6 +11,7 @@ backend-install:
 	$(BACKEND_PIP) install -e backend[dev]
 
 backend-dev:
+	cd backend && ../$(BACKEND_VENV)/bin/alembic upgrade head
 	$(BACKEND_VENV)/bin/uvicorn skillradar_api.main:app --app-dir backend/src --reload
 
 backend-test:

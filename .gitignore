@@ -8,6 +8,7 @@
 *.tsbuildinfo
 __pycache__/
 backend/.venv/
+backend/*.db
 backend/dist/
 backend/*.egg-info/
 backend/src/*.egg-info/

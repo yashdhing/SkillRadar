@@ -1,21 +1,7 @@
 import Link from "next/link";
 
+import { GenerateLessonPanel } from "./components/generate-lesson-panel";
 import { libraryLessons } from "./data/mock-lessons";
-
-const generationModes = [
-  {
-    title: "Continue current",
-    description: "Follow the active lesson into the next practical layer.",
-  },
-  {
-    title: "Discover something new",
-    description: "Branch into a fresh, career-useful topic.",
-  },
-  {
-    title: "From phrase",
-    description: "Start from a phrase such as Kafka exactly-once in practice.",
-  },
-];
 
 export default function HomePage() {
   const activeLesson = libraryLessons.find((lesson) => lesson.isActive);
@@ -23,23 +9,7 @@ export default function HomePage() {
   return (
     <main className="page-shell">
       <div className="content-grid home-grid">
-        <section className="hero-card">
-          <p className="eyebrow">Generate</p>
-          <h2>Use one focused control surface for the next lesson.</h2>
-          <p className="lede">
-            This view is now the dedicated generate surface. Later tasks can
-            wire real request submission into the same structure.
-          </p>
-
-          <div className="mode-list">
-            {generationModes.map((mode) => (
-              <article key={mode.title} className="mode-card">
-                <h3>{mode.title}</h3>
-                <p>{mode.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+        <GenerateLessonPanel />
 
         <section className="section-stack">
           <article className="panel">
@@ -81,4 +51,3 @@ export default function HomePage() {
     </main>
   );
 }
-
