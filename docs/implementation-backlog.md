@@ -272,7 +272,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - `npm run frontend:build`
   - Booted the frontend with `npm run frontend:dev` and verified `GET /`, `GET /library`, and `GET /lessons/jvm-latency-investigation` each returned `HTTP/1.1 200 OK`.
 - Commits:
-  - Pending
+  - `a1f33bb` - Build the minimal application shell
 - New Insights / Plan Updates:
   - A small shared mock-lesson module is enough to establish the reader and library UX without prematurely coupling the frontend shell to unfinished generation APIs.
   - The dedicated generate view can accept real mode selection and request submission later without changing the route structure introduced in this task.
