@@ -242,7 +242,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Verified reseeding is idempotent and refreshes stale profile values rather than creating duplicates.
   - Verified Alembic online and offline migrations now include the profile seed step.
 - Commits:
-  - Pending
+  - `eb95b10` - Seed the default user profile
 - New Insights / Plan Updates:
   - Offline Alembic SQL generation for PostgreSQL required explicit JSON-safe rendering in the data migration; generic JSON bind rendering was not sufficient.
   - Keeping the confirmed profile in a dedicated seed-data module gives later personalization tasks a single source to extend without coupling that logic to migrations or request handlers.
