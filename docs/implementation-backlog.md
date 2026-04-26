@@ -184,7 +184,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Root workspace `node_modules/` should be ignored because npm workspaces hoist dependencies there.
 
 ### TASK-002 - Define Data Schema And Persistence Layer
-- Status: TODO
+- Status: DONE
 - Priority: P0
 - Depends on: TASK-001
 - Goal: Define durable storage for lessons, sources, generation requests, and user profile.
@@ -197,11 +197,25 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - full CRUD UI
   - feedback analytics unless it naturally fits the schema
 - Implementation Notes:
-  - Pending
+  - Added backend configuration settings with a PostgreSQL default connection string and a checked-in `.env.example` for local environment setup.
+  - Added a SQLAlchemy persistence layer with explicit models for `user_profile`, `lessons`, `lesson_sources`, and `generation_requests`, including enums, relationships, and a database-level single-active-lesson constraint.
+  - Added session management and repository utilities so later orchestration tasks can persist entities without coupling directly to raw engine setup.
+  - Added Alembic configuration plus an initial migration that creates the core schema and supports both live upgrades and offline SQL generation.
+  - Added a `docker-compose.yml` PostgreSQL service definition and a `backend-migrate` make target to establish the local developer migration flow.
 - Verification:
+  - `make backend-install`
+  - `make backend-lint`
+  - `make backend-test`
+  - `SKILLRADAR_DATABASE_URL=sqlite+pysqlite:////tmp/skillradar-task-002.db make backend-migrate`
+  - Verified Alembic online migration execution against SQLite for schema creation.
+  - Verified Alembic offline SQL generation for PostgreSQL syntax, including enum creation and the partial unique active-lesson index.
+  - Verified repository-level persistence for user profile, lesson, lesson source, and generation request entities.
+  - Verified the database constraint that prevents more than one active lesson at a time.
+- Commits:
   - Pending
 - New Insights / Plan Updates:
-  - Pending
+  - Docker is not installed in this environment, so the checked-in PostgreSQL compose setup was added but not boot-verified locally.
+  - Enforcing the single active lesson at the schema layer reduces future application-level drift before `TASK-006` adds the explicit active-lesson workflow.
 
 ### TASK-003 - Seed User Profile From Provided Resume Context
 - Status: TODO

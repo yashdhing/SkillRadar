@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: skillradar-postgres
+    environment:
+      POSTGRES_DB: skillradar
+      POSTGRES_USER: skillradar
+      POSTGRES_PASSWORD: skillradar
+    ports:
+      - "5432:5432"
+    volumes:
+      - skillradar-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  skillradar-postgres-data:

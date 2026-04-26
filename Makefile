@@ -3,7 +3,7 @@ BACKEND_VENV := backend/.venv
 BACKEND_PYTHON := $(BACKEND_VENV)/bin/python
 BACKEND_PIP := $(BACKEND_VENV)/bin/pip
 
-.PHONY: backend-install backend-dev backend-test backend-lint frontend-dev frontend-build frontend-lint frontend-typecheck
+.PHONY: backend-install backend-dev backend-test backend-lint backend-migrate frontend-dev frontend-build frontend-lint frontend-typecheck
 
 backend-install:
 	$(PYTHON) -m venv $(BACKEND_VENV)
@@ -19,6 +19,9 @@ backend-test:
 backend-lint:
 	$(BACKEND_VENV)/bin/ruff check backend
 
+backend-migrate:
+	cd backend && ../$(BACKEND_VENV)/bin/alembic upgrade head
+
 frontend-dev:
 	npm run frontend:dev
 
@@ -30,4 +33,3 @@ frontend-lint:
 
 frontend-typecheck:
 	npm run frontend:typecheck
-

@@ -1,7 +1,11 @@
 from fastapi import FastAPI
 
+from skillradar_api.config import get_settings
+
+settings = get_settings()
+
 app = FastAPI(
-    title="SkillRadar API",
+    title=settings.app_name,
     version="0.1.0",
     description="Backend service for grounded study lesson generation.",
 )
@@ -12,7 +16,6 @@ def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/v1", tags=["system"])
+@app.get(settings.api_prefix, tags=["system"])
 def api_root() -> dict[str, str]:
     return {"message": "SkillRadar backend is ready."}
-
