@@ -212,7 +212,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Verified repository-level persistence for user profile, lesson, lesson source, and generation request entities.
   - Verified the database constraint that prevents more than one active lesson at a time.
 - Commits:
-  - Pending
+  - `8dc13f9` - Add persistence schema and migration flow
 - New Insights / Plan Updates:
   - Docker is not installed in this environment, so the checked-in PostgreSQL compose setup was added but not boot-verified locally.
   - Enforcing the single active lesson at the schema layer reduces future application-level drift before `TASK-006` adds the explicit active-lesson workflow.
