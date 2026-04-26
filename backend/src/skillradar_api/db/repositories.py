@@ -12,6 +12,9 @@ class UserProfileRepository:
         self.session.add(profile)
         return profile
 
+    def get_by_id(self, profile_id: str) -> UserProfile | None:
+        return self.session.get(UserProfile, profile_id)
+
 
 class LessonRepository:
     def __init__(self, session: Session) -> None:
@@ -41,4 +44,3 @@ class GenerationRequestRepository:
     def add(self, request: GenerationRequest) -> GenerationRequest:
         self.session.add(request)
         return request
-

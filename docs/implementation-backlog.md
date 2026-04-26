@@ -218,7 +218,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Enforcing the single active lesson at the schema layer reduces future application-level drift before `TASK-006` adds the explicit active-lesson workflow.
 
 ### TASK-003 - Seed User Profile From Provided Resume Context
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-002
 - Goal: Make personalization possible from the start by storing a first-pass user profile.
@@ -229,11 +229,23 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - profile editing UI
 - Implementation Notes:
-  - Pending
+  - Added a dedicated profile seed module that captures only the confirmed resume and topic-priority context from `docs/requirements.md`, without inventing extra preferences or product decisions.
+  - Added an idempotent profile-seeding service and CLI entrypoint so the personalization profile can be inserted or refreshed without duplicating rows.
+  - Added a follow-up Alembic data migration that seeds the default user profile immediately after the core schema migration, so personalization data exists from the first database setup.
+  - Added a `backend-seed-profile` make target for local reseeding during development.
 - Verification:
+  - `make backend-lint`
+  - `make backend-test`
+  - `SKILLRADAR_DATABASE_URL=sqlite+pysqlite:////tmp/skillradar-task-003.db make backend-seed-profile`
+  - Verified the seeded row exists with id `2d0f4bfe-9e8f-4c5d-97f2-4b1f53f5231d`, name `Yash Dhing`, and role `SDE3` in the temporary SQLite database.
+  - Verified the seed service stores confirmed skills, career themes, and topic-priority entries.
+  - Verified reseeding is idempotent and refreshes stale profile values rather than creating duplicates.
+  - Verified Alembic online and offline migrations now include the profile seed step.
+- Commits:
   - Pending
 - New Insights / Plan Updates:
-  - Pending
+  - Offline Alembic SQL generation for PostgreSQL required explicit JSON-safe rendering in the data migration; generic JSON bind rendering was not sufficient.
+  - Keeping the confirmed profile in a dedicated seed-data module gives later personalization tasks a single source to extend without coupling that logic to migrations or request handlers.
 
 ### TASK-004 - Build Minimal Application Shell And Navigation
 - Status: TODO

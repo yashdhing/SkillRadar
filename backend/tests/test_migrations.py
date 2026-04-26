@@ -6,7 +6,7 @@ import subprocess
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 
 def test_alembic_upgrade_creates_expected_tables(sqlite_url: str) -> None:
@@ -35,6 +35,13 @@ def test_alembic_upgrade_creates_expected_tables(sqlite_url: str) -> None:
 
     indexes = inspector.get_indexes("lessons")
     assert any(index["name"] == "ix_lessons_single_active" for index in indexes)
+
+    with engine.connect() as connection:
+        seeded_profile = connection.execute(
+            text("SELECT name, role_title FROM user_profile"),
+        ).one()
+
+    assert seeded_profile == ("Yash Dhing", "SDE3")
 
 
 def test_alembic_offline_sql_targets_postgres_dialect(tmp_path: Path) -> None:
@@ -67,3 +74,4 @@ def test_alembic_offline_sql_targets_postgres_dialect(tmp_path: Path) -> None:
     assert sql_text.count("CREATE TYPE lesson_mode") == 1
     assert sql_text.count("CREATE TYPE lesson_status") == 1
     assert sql_text.count("CREATE TYPE generation_request_status") == 1
+    assert "INSERT INTO user_profile" in sql_text

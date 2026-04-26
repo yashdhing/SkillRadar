@@ -3,7 +3,7 @@ BACKEND_VENV := backend/.venv
 BACKEND_PYTHON := $(BACKEND_VENV)/bin/python
 BACKEND_PIP := $(BACKEND_VENV)/bin/pip
 
-.PHONY: backend-install backend-dev backend-test backend-lint backend-migrate frontend-dev frontend-build frontend-lint frontend-typecheck
+.PHONY: backend-install backend-dev backend-test backend-lint backend-migrate backend-seed-profile frontend-dev frontend-build frontend-lint frontend-typecheck
 
 backend-install:
 	$(PYTHON) -m venv $(BACKEND_VENV)
@@ -21,6 +21,10 @@ backend-lint:
 
 backend-migrate:
 	cd backend && ../$(BACKEND_VENV)/bin/alembic upgrade head
+
+backend-seed-profile:
+	cd backend && ../$(BACKEND_VENV)/bin/alembic upgrade head
+	$(BACKEND_PYTHON) -m skillradar_api.profile.seed_profile
 
 frontend-dev:
 	npm run frontend:dev
