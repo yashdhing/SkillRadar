@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None
+- Current active task: None - awaiting review for TASK-006
 
 ## Tasks
 
@@ -311,7 +311,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - A synchronous placeholder lesson creation step is enough to validate the request lifecycle now, while leaving retrieval, topic planning, and composition as explicit future stages instead of collapsing them into this task.
 
 ### TASK-006 - Add Active Lesson State Management
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-002, TASK-004
 - Goal: Support one active lesson at a time so follow-up generation has a reliable anchor.
@@ -323,11 +323,27 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - progress tracking within a lesson
 - Implementation Notes:
-  - Pending
+  - Added dedicated active-lesson service logic and API routes so activation and active-lesson lookup are explicit backend capabilities instead of being folded into generation or reader code.
+  - Extended the generation response contract with an explicit `fallbackReason` so `continue_active_lesson` can report when it had to fall back because no lesson was active yet.
+  - Added repository helpers that clear prior active flags before marking a new lesson active, preserving the single-active-lesson invariant already enforced at the schema layer.
+  - Updated the home screen to load the persisted active lesson from the backend, handle the intentional no-active 404 state, and show activation controls directly on generated lesson results.
+  - Added lightweight UI messaging for no-active fallback and successful activation without changing the broader multi-step lesson pipeline architecture.
 - Verification:
-  - Pending
+  - `make backend-lint`
+  - `make backend-test`
+  - `npm run frontend:typecheck`
+  - `npm run frontend:lint`
+  - `npm run frontend:build`
+  - Booted the backend with `make backend-dev` and verified `GET /health` returned `{"status":"ok"}`.
+  - Booted the frontend with `npm run frontend:dev` and verified `GET /` returned `HTTP/1.1 200 OK`.
+  - Verified `GET /api/v1/lessons/active` returned `404` before activation, `POST /api/v1/lessons/generate` in `continue_active_lesson` mode returned `fallbackReason: "no_active_lesson"`, and `POST /api/v1/lessons/{lesson_id}/activate` followed by `GET /api/v1/lessons/active` returned the activated lesson summary.
+  - Verified backend tests cover the no-active 404 case, activation, clearing previous active flags, and continue-current generation both with and without an active parent lesson.
+- Commits:
+  - `9c5e5a7` - Add active lesson state management
 - New Insights / Plan Updates:
-  - Pending
+  - Treating `GET /lessons/active` returning `404` as the intentional no-active state keeps the active-lesson workflow explicit without inventing synthetic placeholder records.
+  - Keeping activation as a dedicated endpoint preserves the modular pipeline shape: generation can report fallback conditions now, while later tasks can build richer continuation planning on top of the persisted active-lesson anchor.
+  - `TASK-007` should keep replacing mock lesson-library data with persisted lesson records, but the active-lesson summary on the home screen is now already sourced from the backend and should stay that way.
 
 ### TASK-007 - Implement Lesson Save And Library Access
 - Status: TODO
