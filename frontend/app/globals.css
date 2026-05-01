@@ -263,6 +263,24 @@ h1 {
   color: var(--muted);
 }
 
+.inline-note,
+.success-text {
+  font-size: 0.95rem;
+}
+
+.inline-note {
+  margin: 0;
+  color: var(--muted);
+  background: rgba(164, 77, 39, 0.08);
+  border: 1px solid rgba(164, 77, 39, 0.12);
+  border-radius: 16px;
+  padding: 0.85rem 1rem;
+}
+
+.success-text {
+  color: #28603f;
+}
+
 .text-link {
   color: var(--accent);
   text-decoration: none;

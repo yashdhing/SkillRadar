@@ -118,6 +118,11 @@ def create_generation_request(
 
     profile = profile_repo.get_first()
     active_lesson = lesson_repo.get_active()
+    fallback_reason = (
+        "no_active_lesson"
+        if request.mode == LessonMode.CONTINUE_ACTIVE_LESSON and active_lesson is None
+        else None
+    )
 
     title = _build_title(request.mode, request.seed_phrase, active_lesson.title if active_lesson else None)
     summary = _build_summary(request.mode, request.seed_phrase)
@@ -157,6 +162,7 @@ def create_generation_request(
                 "generationRequestId": generation_request.id,
                 "placeholder": True,
                 "activeLessonAvailable": active_lesson is not None,
+                "fallbackReason": fallback_reason,
             },
             is_active=False,
             parent_lesson_id=active_lesson.id if request.mode == LessonMode.CONTINUE_ACTIVE_LESSON and active_lesson else None,
@@ -175,5 +181,5 @@ def create_generation_request(
         status=generation_request.status,
         mode=lesson.mode,
         seedPhrase=lesson.seed_phrase,
+        fallbackReason=fallback_reason,
     )
-

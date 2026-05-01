@@ -34,6 +34,17 @@ class GenerateLessonResponse(BaseModel):
     status: GenerationRequestStatus
     mode: LessonMode
     seed_phrase: str | None = Field(alias="seedPhrase")
+    fallback_reason: str | None = Field(default=None, alias="fallbackReason")
 
     model_config = ConfigDict(populate_by_name=True, use_enum_values=True)
 
+
+class LessonSummaryResponse(BaseModel):
+    lesson_id: str = Field(alias="lessonId")
+    title: str
+    summary: str
+    mode: LessonMode
+    estimated_study_minutes: int = Field(alias="estimatedStudyMinutes")
+    is_active: bool = Field(alias="isActive")
+
+    model_config = ConfigDict(populate_by_name=True, use_enum_values=True)

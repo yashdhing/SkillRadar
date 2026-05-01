@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-type GenerationMode =
+export type GenerationMode =
   | "continue_active_lesson"
   | "discover_new_topic"
   | "phrase_seeded";
@@ -15,6 +15,16 @@ type GenerationResult = {
   status: string;
   mode: GenerationMode;
   seedPhrase: string | null;
+  fallbackReason: string | null;
+};
+
+export type ActiveLessonSummary = {
+  lessonId: string;
+  title: string;
+  summary: string;
+  mode: GenerationMode;
+  estimatedStudyMinutes: number;
+  isActive: boolean;
 };
 
 const generationModes: Array<{
@@ -43,18 +53,29 @@ function getApiBaseUrl() {
   return process.env.NEXT_PUBLIC_SKILLRADAR_API_BASE_URL ?? "http://127.0.0.1:8000";
 }
 
-export function GenerateLessonPanel() {
+type GenerateLessonPanelProps = {
+  activeLesson: ActiveLessonSummary | null;
+  onActiveLessonChange: (lesson: ActiveLessonSummary) => void;
+};
+
+export function GenerateLessonPanel({
+  activeLesson,
+  onActiveLessonChange,
+}: GenerateLessonPanelProps) {
   const [mode, setMode] = useState<GenerationMode>("continue_active_lesson");
   const [phrase, setPhrase] = useState("");
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [isActivating, setIsActivating] = useState(false);
+  const [activationMessage, setActivationMessage] = useState<string | null>(null);
 
   const isPhraseMode = mode === "phrase_seeded";
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setActivationMessage(null);
 
     if (isPhraseMode && !phrase.trim()) {
       setError("Enter a phrase to generate a phrase-seeded lesson.");
@@ -94,6 +115,44 @@ export function GenerateLessonPanel() {
     });
   };
 
+  const handleActivateLesson = async () => {
+    if (!result) {
+      return;
+    }
+
+    setIsActivating(true);
+    setError(null);
+    setActivationMessage(null);
+
+    try {
+      const response = await fetch(
+        `${getApiBaseUrl()}/api/v1/lessons/${result.lessonId}/activate`,
+        {
+          method: "POST",
+        },
+      );
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { detail?: string }
+          | null;
+        throw new Error(payload?.detail ?? "Failed to mark lesson active.");
+      }
+
+      const payload = (await response.json()) as ActiveLessonSummary;
+      onActiveLessonChange(payload);
+      setActivationMessage("This lesson is now the active lesson.");
+    } catch (activationError) {
+      setError(
+        activationError instanceof Error
+          ? activationError.message
+          : "Failed to mark lesson active.",
+      );
+    } finally {
+      setIsActivating(false);
+    }
+  };
+
   return (
     <section className="hero-card">
       <p className="eyebrow">Generate</p>
@@ -102,6 +161,13 @@ export function GenerateLessonPanel() {
         This view now submits real generation requests to the backend while the
         deeper retrieval and composition pipeline is still under construction.
       </p>
+
+      {mode === "continue_active_lesson" && !activeLesson ? (
+        <p className="inline-note">
+          No active lesson is set yet. Continue current will fall back to a
+          profile-guided draft until you promote a lesson to active.
+        </p>
+      ) : null}
 
       <form className="generate-form" onSubmit={handleSubmit}>
         <fieldset className="mode-list">
@@ -152,6 +218,12 @@ export function GenerateLessonPanel() {
             <p className="eyebrow">Generation Result</p>
             <h3>{result.lessonTitle}</h3>
             <p>{result.lessonSummary}</p>
+            {result.fallbackReason === "no_active_lesson" ? (
+              <p className="inline-note">
+                Continue current used the no-active fallback because no lesson
+                was active yet.
+              </p>
+            ) : null}
             <div className="result-grid">
               <div>
                 <span className="result-label">Status</span>
@@ -170,10 +242,22 @@ export function GenerateLessonPanel() {
                 <p>{result.lessonId}</p>
               </div>
             </div>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleActivateLesson}
+                disabled={isActivating}
+              >
+                {isActivating ? "Setting active..." : "Mark lesson active"}
+              </button>
+              {activationMessage ? (
+                <span className="success-text">{activationMessage}</span>
+              ) : null}
+            </div>
           </article>
         ) : null}
       </form>
     </section>
   );
 }
-

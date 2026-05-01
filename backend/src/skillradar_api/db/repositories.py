@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from skillradar_api.db.models import GenerationRequest, Lesson, LessonSource, UserProfile
@@ -30,8 +30,14 @@ class LessonRepository:
     def get_by_slug(self, slug: str) -> Lesson | None:
         return self.session.scalar(select(Lesson).where(Lesson.slug == slug))
 
+    def get_by_id(self, lesson_id: str) -> Lesson | None:
+        return self.session.get(Lesson, lesson_id)
+
     def get_active(self) -> Lesson | None:
         return self.session.scalar(select(Lesson).where(Lesson.is_active.is_(True)))
+
+    def clear_active_flags(self) -> None:
+        self.session.execute(update(Lesson).values(is_active=False))
 
 
 class LessonSourceRepository:
