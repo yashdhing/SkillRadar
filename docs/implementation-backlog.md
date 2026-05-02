@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-009
+- Current active task: None - awaiting review for TASK-010
 
 ## Tasks
 
@@ -466,7 +466,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Solution.md mentions allowlist/denylist filtering as a quality control. TASK-013 should add that as an explicit `EvidencePackager` policy parameter rather than hard-coding into the mock — the protocol seam already supports this.
 
 ### TASK-010 - Generate Structured Lesson Drafts From Grounded Inputs
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-005, TASK-008, TASK-009
 - Goal: Produce lessons in the required structured format with metadata and citations.
@@ -478,11 +478,31 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - advanced scoring or personalization refinement
 - Implementation Notes:
-  - Pending
+  - Added `generation/orchestrator.py` with a pure async `run_generation_pipeline` that drives `TopicPlannerAgent.plan_topic` → `RetrievalPipeline.run` → `LessonComposerAgent.compose_lesson` and returns a `GenerationOutcome` carrying the brief, full retrieval trace, and composed lesson. The orchestrator deliberately knows nothing about SQLAlchemy so each stage stays independently testable and replaceable.
+  - Refactored `generation/service.py` to call the orchestrator across one `asyncio.run` boundary (per the TASK-009 insight to avoid event-loop churn), translate the persisted profile + active lesson + recent lessons into agent-layer summaries, and persist the composed output into `lessons` + `lesson_sources` rows with full metadata.
+  - Added typed seam parameters (`planner`, `composer`, `retrieval_pipeline`) to `create_generation_request` so future feature flags or tests can swap stages without monkey-patching the factory module; defaults still resolve through `agents.factory` and `retrieval.factory`.
+  - Markdown assembly + TOC generation are split helpers (`_assemble_markdown`, `_toc_entries`) with a documented invariant: TOC entries and `## ` blocks emit in the same order so the frontend reader's anchor parser keeps resolving sections correctly. Sections include "Why this matters", optional learning objectives, every composer-produced section, optional practical takeaways, and optional references.
+  - Lesson `metadata_json` now records the planner brief (target topic, shape, novelty, intent, search queries, desired sections, notes), composer metadata, learning objectives, practical takeaways, and a retrieval trace summary (hit/fetch/failure/extract/ranked/source counts) so debugging and TASK-013 quality work can read pipeline decisions from the persisted lesson.
+  - `lesson_sources.metadata_json` carries the agent-layer `RankedSource.source_id`, `combined_score`, `rationale`, `source_kind`, and `brief_target_topic`; per-stage scores (relevance/quality/novelty) populate the dedicated columns. Snippet text from the extractor lands in `content_snapshot`.
+  - `generation_requests.input_context_json` now also records `recentLessonIds` so the planner's input context is auditable, and `fallbackReason` is preserved in both the request row and the resulting lesson metadata.
+  - Updated the existing detail-with-sources library test to acknowledge that lessons now ship with grounded sources by default; assertions check for the manually attached row alongside the retrieval-grounded ones rather than expecting an exact count.
 - Verification:
-  - Pending
+  - `make backend-lint`
+  - `make backend-test` — 53 passed (7 new orchestration tests in `backend/tests/test_generation_orchestration.py` plus refreshed library + generation tests).
+  - Verified composed title and summary land on the persisted `Lesson` row instead of the previous static placeholder.
+  - Verified `metadata_json.briefShape`, `briefNovelty`, `briefSearchQueries`, `briefDesiredSections`, `learningObjectives`, `practicalTakeaways`, `composerMetadata`, and `retrieval` trace fields are all populated and consistent with the planner+retrieval stage outputs.
+  - Verified `lesson_sources` rows are persisted with `agentSourceId`, `combined_score`, `relevance_score`, `quality_score`, `novelty_score`, and the original URL/title/domain so per-stage scores survive into persistence for later auditability and personalization work.
+  - Verified `## ` markdown headings match the TOC titles and order, including the "Why this matters", "Learning objectives", "Practical takeaways", and "References" wrapper sections, so the frontend reader can resolve every TOC anchor.
+  - Verified continue-mode generation links `parent_lesson_id` to the active lesson and clears `fallbackReason`; without an active lesson, both the response and persisted metadata flag `no_active_lesson` and `parent_lesson_id` stays `NULL`.
+  - Verified `generation_requests.input_context_json.recentLessonIds` includes prior lesson IDs so the planner's history input is auditable from the request row.
+- Commits:
+  - `baceacc` - Wire planner + retrieval + composer into lesson generation
 - New Insights / Plan Updates:
-  - Pending
+  - The orchestration boundary ended up clean: service does persistence + request lifecycle, orchestrator does the async pipeline, neither leaks into the other. That keeps the seam open for TASK-012 (personalization) to operate purely on `TopicPlannerInput` construction without touching persistence.
+  - Sources are persisted as plain `LessonSource` rows even when the mock retrieval emits placeholder `https://*.example.com` URLs. TASK-013 should add an evidence-packager policy hook (allowlist/denylist) before any non-mock backend lands so the seam stays clean.
+  - The composer is invoked even when retrieval returns zero sources. Solution.md flags this as a risk (AI hallucinating beyond sources). The mock currently produces structured output regardless; the real composer in TASK-013/14 should refuse unsupported sections, and the orchestrator should already be able to surface that as a `GenerationRequestStatus.FAILED` via the existing `try/except` boundary.
+  - Reader-side markdown rendering still uses the lightweight in-app splitter from TASK-007. With richer composer output now flowing in, TASK-011 has a real motivation to land — a proper markdown renderer would unlock list rendering for learning objectives and references rather than relying on raw paragraphs.
+  - The mock retrieval pipeline fakes all I/O. Latency is irrelevant today, but real backends will need timeout/rate-limit policy. The single `asyncio.run` boundary in the service is the natural place to wrap that with a deadline.
 
 ### TASK-011 - Render Hierarchical Lesson Reader
 - Status: TODO
