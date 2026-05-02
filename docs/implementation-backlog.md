@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-012
+- Current active task: None - awaiting review for TASK-013
 
 ## Tasks
 
@@ -576,7 +576,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - The service fix for active-lesson visibility addressed a previously silent gap: prior to this task, marking a lesson active would also exclude it from any future planner's history view, so phrase-seeded or discover lessons could repeat its topic without any signal. Worth flagging in TASK-015 reconciliation as an example of the kind of cross-task gap the dynamic backlog is meant to surface.
 
 ### TASK-013 - Add Basic Source Quality Controls
-- Status: TODO
+- Status: DONE
 - Priority: P2
 - Depends on: TASK-009, TASK-010
 - Goal: Reduce poor-quality source usage in generated lessons.
@@ -588,11 +588,34 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - enterprise-grade trust scoring
 - Implementation Notes:
-  - Pending
+  - Added `retrieval/quality.py` with a frozen `RetrievalQualityPolicy` dataclass centralizing every quality knob: `min_relevance_score`, `min_quality_score`, `min_word_count`, `max_per_domain`, `allowed_domains`, `denied_domains`, `preferred_domains`, and `domain_credibility_boost`. Defaults are no-op so a bare policy preserves prior behavior; `STANDARD_QUALITY_POLICY` carries production-leaning defaults (`min_word_count=20`, `max_per_domain=2`, `domain_credibility_boost=0.2`).
+  - Extended `retrieval/types.py` with `DroppedExtract` and stable `DROP_REASON_*` string constants so the trace surface is machine-readable across providers (no free-form string parsing).
+  - Updated the `EvidencePackager` protocol to return a new `PackagedEvidence(accepted, dropped)` dataclass (defined in `retrieval/protocols.py`). The protocol no longer just yields a `tuple[RankedSource, ...]`; auditability is now part of the contract every packager implementation must honor.
+  - `MockSourceRanker` accepts an optional `RetrievalQualityPolicy`. Quality is now decomposed into `richness` (word-count-driven) plus a credibility boost when the extract's domain is in `preferred_domains`. Rationale strings record both signals so per-source auditability survives into `lesson_sources.metadata_json`.
+  - `MockEvidencePackager` accepts the same policy and applies a documented filter ordering (duplicate URL → denied → not-in-allowlist → thin → low-relevance → low-quality → per-domain cap → max-sources). Each drop carries the matching `DROP_REASON_*` string and a short detail blob (e.g. `word_count=10`). Accepted sources also gain a `preferred_domain: bool` flag in their metadata.
+  - `RetrievalPipeline` now reads `PackagedEvidence` from the packager and threads `dropped` through `RetrievalResult`, alongside the existing `fetch_failures`. Stage boundaries are intact; the orchestrator never re-derives reasons.
+  - `build_default_retrieval_pipeline` defaults to `STANDARD_QUALITY_POLICY` so the pipeline ships with the controls turned on. Tests that need raw behavior pass an explicit `RetrievalQualityPolicy()` to opt out.
+  - `generation/service._lesson_metadata` now records `retrieval.droppedCount` and `retrieval.dropReasonCounts` (a `{reason: count}` bucket) on every persisted lesson, so retrieval decisions stay auditable from the lesson reader and the library API. The bucket helper is a small private function so it stays scoped to this module.
+  - Did not introduce a separate ranker policy vs. packager policy: a single `RetrievalQualityPolicy` flows through both stages. If real backends ever need divergent policies, the seam is already two parameters in the factory.
+  - `retrieval/__init__.py` re-exports `RetrievalQualityPolicy`, `STANDARD_QUALITY_POLICY`, `PackagedEvidence`, and `DroppedExtract` so callers consume the policy through the package's public surface, not the internal modules.
 - Verification:
-  - Pending
+  - `make backend-lint`
+  - `make backend-test` — 71 passed (9 new retrieval quality-control tests in `test_retrieval.py` + 1 added orchestration assertion).
+  - Verified `MockSourceRanker` boosts `quality_score` for extracts whose domain is in `preferred_domains` and leaves untrusted-domain quality unchanged.
+  - Verified the packager drops thin content (`word_count < min_word_count`) with `DROP_REASON_THIN_CONTENT`, low-relevance and low-quality items with the matching reasons, and respects both `denied_domains` (DENIED_DOMAIN) and `allowed_domains` (NOT_IN_ALLOWLIST) policies.
+  - Verified `max_per_domain` enforcement: the policy admits the first hit per domain and drops the rest with `DROP_REASON_PER_DOMAIN_CAP`.
+  - Verified URL dedup still works and that `max_sources=0` short-circuits cleanly with `DROP_REASON_MAX_SOURCES`.
+  - Verified the default `build_default_retrieval_pipeline` shares one `STANDARD_QUALITY_POLICY` instance across ranker and packager, and that an explicit zero-policy invocation reverts to "everything except duplicates is accepted" behavior.
+  - Verified `RetrievalResult.dropped` is populated end-to-end when a tight per-domain cap is in effect, and that accepted sources surface their `preferred_domain` flag in metadata.
+  - End-to-end via the orchestration test: persisted lesson `metadata_json["retrieval"]` now carries both `droppedCount` and a `dropReasonCounts` dict.
+- Commits:
+  - update after execution
 - New Insights / Plan Updates:
-  - Pending
+  - The packager's filter ordering is intentional: dedup-by-URL fires first so we never count the same URL against later thresholds (e.g., per-domain cap). Document the order alongside the constants if a real packager ever overrides it; reordering changes which drop reason a borderline source is tagged with.
+  - `STANDARD_QUALITY_POLICY` ships with `preferred_domains=frozenset()`, so credibility boosts are off by default. When real retrieval lands, this is the single attribute to populate with curated trusted domains. The seam exists; the data is not yet curated.
+  - The `min_word_count` default of 20 is calibrated for the mock fetcher's synthetic HTML (~30–50 words after stripping). Real fetchers will produce much richer content; bump this floor (probably 200+) once the first real fetcher backend lands so it actually filters thin pages.
+  - The packager protocol changed shape (returns `PackagedEvidence` not a bare tuple). Any future external packager implementation must now expose drops on its return type — by design, since auditability was a TASK-013 scope item. Real backends will need to map their internal failure modes onto our `DROP_REASON_*` constants to keep the trace consistent.
+  - Solution.md flagged "the orchestrator should record intermediate outputs for debugging and future refinement". Drops are now recorded; the natural next step (out of scope here) is a debug UI that renders the trace per lesson. The library route is the obvious surface.
 
 ### TASK-014 - Add End-To-End Smoke Tests For MVP Flows
 - Status: TODO
