@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
+
+import { saveLesson } from "../lib/lessons-api";
 
 export type GenerationMode =
   | "continue_active_lesson"
@@ -16,6 +19,7 @@ type GenerationResult = {
   mode: GenerationMode;
   seedPhrase: string | null;
   fallbackReason: string | null;
+  isSaved: boolean;
 };
 
 export type ActiveLessonSummary = {
@@ -69,6 +73,8 @@ export function GenerateLessonPanel({
   const [isPending, startTransition] = useTransition();
   const [isActivating, setIsActivating] = useState(false);
   const [activationMessage, setActivationMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   const isPhraseMode = mode === "phrase_seeded";
 
@@ -76,6 +82,7 @@ export function GenerateLessonPanel({
     event.preventDefault();
     setError(null);
     setActivationMessage(null);
+    setSaveMessage(null);
 
     if (isPhraseMode && !phrase.trim()) {
       setError("Enter a phrase to generate a phrase-seeded lesson.");
@@ -103,8 +110,11 @@ export function GenerateLessonPanel({
           throw new Error(payload?.detail ?? fallbackMessage);
         }
 
-        const payload = (await response.json()) as GenerationResult;
-        setResult(payload);
+        const payload = (await response.json()) as Omit<
+          GenerationResult,
+          "isSaved"
+        >;
+        setResult({ ...payload, isSaved: false });
       } catch (submissionError) {
         setError(
           submissionError instanceof Error
@@ -113,6 +123,30 @@ export function GenerateLessonPanel({
         );
       }
     });
+  };
+
+  const handleSaveLesson = async () => {
+    if (!result) {
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+    setSaveMessage(null);
+
+    try {
+      const updated = await saveLesson(result.lessonId);
+      setResult({ ...result, isSaved: updated.status === "saved" });
+      setSaveMessage("Lesson saved to your library.");
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save lesson.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleActivateLesson = async () => {
@@ -245,12 +279,33 @@ export function GenerateLessonPanel({
             <div className="inline-actions">
               <button
                 type="button"
+                className="primary-button"
+                onClick={handleSaveLesson}
+                disabled={isSaving || result.isSaved}
+              >
+                {result.isSaved
+                  ? "Saved"
+                  : isSaving
+                  ? "Saving..."
+                  : "Save lesson"}
+              </button>
+              <button
+                type="button"
                 className="secondary-button"
                 onClick={handleActivateLesson}
                 disabled={isActivating}
               >
                 {isActivating ? "Setting active..." : "Mark lesson active"}
               </button>
+              <Link
+                href={`/lessons/${result.lessonId}`}
+                className="secondary-button"
+              >
+                Open reader
+              </Link>
+              {saveMessage ? (
+                <span className="success-text">{saveMessage}</span>
+              ) : null}
               {activationMessage ? (
                 <span className="success-text">{activationMessage}</span>
               ) : null}

@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 const navItems = [
   { href: "/", label: "Generate" },
   { href: "/library", label: "Library" },
-  { href: "/lessons/jvm-latency-investigation", label: "Reader" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

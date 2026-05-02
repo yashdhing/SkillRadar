@@ -1,7 +1,14 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
+"use client";
 
-import { getLessonById } from "../../data/mock-lessons";
+import Link from "next/link";
+import { use, useEffect, useState, useTransition } from "react";
+
+import {
+  fetchLessonDetail,
+  parseLessonMarkdown,
+  saveLesson,
+  type LessonDetail,
+} from "../../lib/lessons-api";
 
 type LessonReaderPageProps = {
   params: Promise<{
@@ -9,15 +16,111 @@ type LessonReaderPageProps = {
   }>;
 };
 
-export default async function LessonReaderPage({
-  params,
-}: LessonReaderPageProps) {
-  const { lessonId } = await params;
-  const lesson = getLessonById(lessonId);
+export default function LessonReaderPage({ params }: LessonReaderPageProps) {
+  const { lessonId } = use(params);
+  const [lesson, setLesson] = useState<LessonDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [isSaving, startSaveTransition] = useTransition();
 
-  if (!lesson) {
-    notFound();
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      try {
+        const detail = await fetchLessonDetail(lessonId);
+        if (isMounted) {
+          setLesson(detail);
+          setError(null);
+          setNotFound(false);
+        }
+      } catch (loadError) {
+        if (!isMounted) {
+          return;
+        }
+        const message =
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load the lesson.";
+        if (message === "Lesson not found.") {
+          setNotFound(true);
+        } else {
+          setError(message);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [lessonId]);
+
+  const handleSave = () => {
+    if (!lesson) {
+      return;
+    }
+    setSaveError(null);
+    setSaveMessage(null);
+    startSaveTransition(async () => {
+      try {
+        const updated = await saveLesson(lesson.lessonId);
+        setLesson(updated);
+        setSaveMessage("Lesson saved to your library.");
+      } catch (saveErr) {
+        setSaveError(
+          saveErr instanceof Error ? saveErr.message : "Failed to save lesson.",
+        );
+      }
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <main className="page-shell">
+        <p className="lede compact">Loading lesson.</p>
+      </main>
+    );
   }
+
+  if (notFound) {
+    return (
+      <main className="page-shell">
+        <p className="inline-note">
+          That lesson could not be found. It may have been removed.
+        </p>
+        <p>
+          <Link href="/library" className="text-link">
+            Back to library
+          </Link>
+        </p>
+      </main>
+    );
+  }
+
+  if (error || !lesson) {
+    return (
+      <main className="page-shell">
+        <p className="error-text">{error ?? "Failed to load the lesson."}</p>
+        <p>
+          <Link href="/library" className="text-link">
+            Back to library
+          </Link>
+        </p>
+      </main>
+    );
+  }
+
+  const parsed = parseLessonMarkdown(lesson.contentMarkdown, lesson.toc);
+  const isSaved = lesson.status === "saved";
 
   return (
     <main className="page-shell">
@@ -43,20 +146,32 @@ export default async function LessonReaderPage({
             <Link href="/library" className="secondary-button">
               Back to library
             </Link>
-            <button type="button" className="primary-button" disabled>
-              Save lesson
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleSave}
+              disabled={isSaving || isSaved}
+            >
+              {isSaved ? "Saved" : isSaving ? "Saving..." : "Save lesson"}
             </button>
           </div>
+          {saveMessage ? (
+            <p className="success-text">{saveMessage}</p>
+          ) : null}
+          {saveError ? <p className="error-text">{saveError}</p> : null}
         </aside>
 
         <article className="reader-content panel">
           <div className="reader-meta">
-            <span className="pill">{lesson.topicLabel}</span>
+            <span className="pill">{lesson.mode}</span>
             <span className="muted-inline">
               {lesson.estimatedStudyMinutes} min
             </span>
             <span className="muted-inline">
               {lesson.isActive ? "Current active lesson" : "Available lesson"}
+            </span>
+            <span className="muted-inline">
+              {isSaved ? "Saved" : "Generated"}
             </span>
           </div>
 
@@ -64,39 +179,62 @@ export default async function LessonReaderPage({
           <h2>{lesson.title}</h2>
           <p className="lede">{lesson.summary}</p>
 
-          {lesson.sections.map((section) => (
+          {parsed.intro.length > 0 ? (
+            <section className="reader-section">
+              {parsed.intro.map((paragraph, index) => (
+                <p key={`intro-${index}`}>{paragraph}</p>
+              ))}
+            </section>
+          ) : null}
+
+          {parsed.sections.map((section) => (
             <section
               key={section.anchor}
               id={section.anchor}
               className="reader-section"
             >
               <h3>{section.heading}</h3>
-              {section.body.map((paragraph) => (
-                <p key={paragraph}>{paragraph}</p>
+              {section.body.map((paragraph, index) => (
+                <p key={`${section.anchor}-${index}`}>{paragraph}</p>
               ))}
             </section>
           ))}
 
-          <section className="reader-section">
-            <h3>Source References</h3>
-            <ul className="source-list">
-              {lesson.sourceLinks.map((source) => (
-                <li key={source.href}>
-                  <a
-                    href={source.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-link"
-                  >
-                    {source.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {lesson.sources.length > 0 ? (
+            <section className="reader-section">
+              <h3>Source References</h3>
+              <ul className="source-list">
+                {lesson.sources.map((source) => (
+                  <li key={source.sourceId}>
+                    <a
+                      href={source.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-link"
+                    >
+                      {source.title}
+                    </a>
+                    {source.domain ? (
+                      <span className="muted-inline">
+                        {" "}
+                        — {source.domain}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : (
+            <section className="reader-section">
+              <h3>Source References</h3>
+              <p className="muted-inline">
+                Source references will appear once the retrieval pipeline starts
+                attaching evidence in later phases.
+              </p>
+            </section>
+          )}
         </article>
       </div>
     </main>
   );
 }
-
