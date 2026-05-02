@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-010
+- Current active task: None - awaiting review for TASK-011
 
 ## Tasks
 
@@ -505,7 +505,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - The mock retrieval pipeline fakes all I/O. Latency is irrelevant today, but real backends will need timeout/rate-limit policy. The single `asyncio.run` boundary in the service is the natural place to wrap that with a deadline.
 
 ### TASK-011 - Render Hierarchical Lesson Reader
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-004, TASK-010
 - Goal: Display generated lessons in-app in a readable format with a hierarchical index.
@@ -517,11 +517,27 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - advanced rich-text editing
 - Implementation Notes:
-  - Pending
+  - Replaced `parseLessonMarkdown`'s flat string-paragraph contract with a typed `LessonBlock` model: paragraphs carry inline nodes (`text` / `link` / `bold` / `code`), lists carry one `InlineNode[]` per item, and `subheading` blocks render `### ` headings inside a section. Sections expose `blocks: LessonBlock[]` instead of `body: string[]` so the renderer never has to guess whether a string is a list or a paragraph.
+  - Added `parseInline` for `[text](href)`, `**bold**`, and `` `code` `` tokens and `blocksFromBuffer` for paragraph + list segmentation, both intentionally bounded to the markdown shape the composer emits today; out-of-scope markdown features (tables, nested lists, code blocks, images) deliberately stay unsupported until either the composer needs them or the dependency tradeoff changes.
+  - Added `frontend/app/components/lesson-content.tsx` as the only consumer of the block model. The component renders paragraphs, ordered/unordered lists, and inline links/bold/code into proper React JSX and is the seam to swap for `react-markdown` later if the composer's output ever exceeds this scope.
+  - Updated `app/lessons/[lessonId]/page.tsx` to render intro and section content through `LessonContent`, replacing the previous `body.map(p => <p>{p}</p>)`. Renamed the source list section to "Grounding Sources", surfaced author when present, and made the empty-source copy clearer about the retrieval pipeline state.
+  - Added CSS support for `.content-list`, `.inline-code`, sticky-header `scroll-margin-top` on `.reader-section`, and tightened `<h3>` / `<h4>` sizing so long lessons render with consistent rhythm. Existing TOC sticky behaviour, source-list spacing, and mobile responsiveness all preserved.
+  - Did NOT add a markdown library (e.g. `react-markdown`). The composer's emitted markdown is bounded and we control its shape, so the dependency was not justified. The renderer is one self-contained module ready to be swapped if/when we widen the markdown contract.
 - Verification:
-  - Pending
+  - `npm run frontend:typecheck`
+  - `npm run frontend:lint`
+  - `npm run frontend:build` — all routes built; reader bundle ~2.85 kB.
+  - Booted backend (uvicorn :8765) + frontend (`next dev` :3765) and exercised end-to-end:
+    - `POST /api/v1/lessons/generate` (phrase_seeded "Kafka exactly-once in practice") returned a lesson whose `contentMarkdown` contained `## Learning objectives` with `- ...` bullets, per-section `## ` blocks with `[link](url)` inline links, `## Practical takeaways` with `- ...` bullets, and `## References` with `- [title](url)` items.
+    - `GET /lessons/{lessonId}` returned `HTTP/1.1 200 OK`; client-side hydration runs `parseLessonMarkdown` and drives `LessonContent`.
+    - TOC titles match the `## ` headings in the composer markdown one-for-one (`Why this matters`, `Learning objectives`, planner sections, `Practical takeaways`, `References`), confirming the TASK-010 ordering invariant still holds with the richer block model.
+- Commits:
+  - `30f4fc5` - Render lesson markdown through a typed block model
 - New Insights / Plan Updates:
-  - Pending
+  - The block model now has room for `subheading` (`###`) blocks even though the current composer never emits them. Keeping the case in the renderer means TASK-014/15 quality work can introduce sub-section structure without another renderer rewrite.
+  - The `Grounding Sources` panel at the bottom of the reader is the natural surface for surfacing per-source relevance/quality/novelty scores from `lesson_sources` once we want to expose them; the seam exists, but actually rendering them is intentionally out of scope here.
+  - Solution.md flags potential code blocks and tables as future content. When that lands, swap the inline parser + block parser for `react-markdown` + `remark-gfm`. The single touchpoint is `frontend/app/components/lesson-content.tsx` plus the parser exports in `lib/lessons-api.ts`.
+  - The current reader markup still calls the section "Source References" in earlier comments; renamed to "Grounding Sources" in the TASK-011 update to better reflect the retrieval pipeline's evidence framing. If a future task brings back human-curated reading lists, that distinction matters and should not collapse back into one section.
 
 ### TASK-012 - Personalize Topic Selection Using Lesson History And User Profile
 - Status: TODO
