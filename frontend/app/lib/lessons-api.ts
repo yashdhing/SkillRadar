@@ -106,22 +106,127 @@ export async function saveLesson(lessonId: string): Promise<LessonDetail> {
   return (await response.json()) as LessonDetail;
 }
 
+/**
+ * Lesson markdown is rendered through a small typed block model rather than
+ * a full markdown library: the composer's output is bounded (paragraphs,
+ * bullet lists, inline links/bold/code) and we control its shape, so a
+ * dependency-free parser keeps the frontend minimal while still rendering
+ * structured content correctly.
+ *
+ * If the composer ever needs to emit code blocks, tables, or nested lists,
+ * swap this for `react-markdown` + `remark-gfm` — the LessonContent component
+ * is the only consumer.
+ */
+export type InlineNode =
+  | { kind: "text"; text: string }
+  | { kind: "link"; text: string; href: string }
+  | { kind: "bold"; text: string }
+  | { kind: "code"; text: string };
+
+export type LessonBlock =
+  | { kind: "paragraph"; inline: InlineNode[] }
+  | { kind: "list"; items: InlineNode[][] }
+  | { kind: "subheading"; text: string };
+
 export type MarkdownSection = {
   heading: string;
   anchor: string;
-  body: string[];
+  blocks: LessonBlock[];
 };
 
 export type ParsedMarkdownLesson = {
-  intro: string[];
+  intro: LessonBlock[];
   sections: MarkdownSection[];
 };
 
-function paragraphsFromBlock(block: string): string[] {
-  return block
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter((paragraph) => paragraph.length > 0);
+const INLINE_TOKEN_RE = /(\[[^\]]+\]\([^)]+\))|(\*\*[^*]+\*\*)|(`[^`]+`)/g;
+
+function parseInline(raw: string): InlineNode[] {
+  const nodes: InlineNode[] = [];
+  let cursor = 0;
+  for (const match of raw.matchAll(INLINE_TOKEN_RE)) {
+    const matchIndex = match.index ?? 0;
+    if (matchIndex > cursor) {
+      nodes.push({ kind: "text", text: raw.slice(cursor, matchIndex) });
+    }
+    const token = match[0];
+    if (token.startsWith("[")) {
+      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
+      if (linkMatch) {
+        nodes.push({ kind: "link", text: linkMatch[1], href: linkMatch[2] });
+      } else {
+        nodes.push({ kind: "text", text: token });
+      }
+    } else if (token.startsWith("**")) {
+      nodes.push({ kind: "bold", text: token.slice(2, -2) });
+    } else if (token.startsWith("`")) {
+      nodes.push({ kind: "code", text: token.slice(1, -1) });
+    }
+    cursor = matchIndex + token.length;
+  }
+  if (cursor < raw.length) {
+    nodes.push({ kind: "text", text: raw.slice(cursor) });
+  }
+  return nodes.length > 0 ? nodes : [{ kind: "text", text: raw }];
+}
+
+function blocksFromBuffer(buffer: string[]): LessonBlock[] {
+  const blocks: LessonBlock[] = [];
+  let paragraphLines: string[] = [];
+  let listItems: InlineNode[][] | null = null;
+
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) {
+      return;
+    }
+    const text = paragraphLines.join(" ").trim();
+    paragraphLines = [];
+    if (text.length === 0) {
+      return;
+    }
+    blocks.push({ kind: "paragraph", inline: parseInline(text) });
+  };
+
+  const flushList = () => {
+    if (listItems === null) {
+      return;
+    }
+    if (listItems.length > 0) {
+      blocks.push({ kind: "list", items: listItems });
+    }
+    listItems = null;
+  };
+
+  for (const rawLine of buffer) {
+    const line = rawLine.replace(/\s+$/, "");
+    if (line.trim().length === 0) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    if (line.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "subheading", text: line.slice(4).trim() });
+      continue;
+    }
+    const listMatch = /^[-*]\s+(.+)$/.exec(line.trim());
+    if (listMatch) {
+      flushParagraph();
+      if (listItems === null) {
+        listItems = [];
+      }
+      listItems.push(parseInline(listMatch[1]));
+      continue;
+    }
+    flushList();
+    paragraphLines.push(line.trim());
+  }
+
+  flushParagraph();
+  flushList();
+
+  return blocks;
 }
 
 export function parseLessonMarkdown(
@@ -129,12 +234,13 @@ export function parseLessonMarkdown(
   toc: TocEntry[],
 ): ParsedMarkdownLesson {
   const lines = contentMarkdown.split("\n");
-  const intro: string[] = [];
   const sections: MarkdownSection[] = [];
   let mode: "intro" | "section" = "intro";
+  const introBuffer: string[] = [];
   let currentHeading = "";
   let currentBuffer: string[] = [];
   let sectionIndex = 0;
+  let titleSeen = false;
 
   const flushSection = () => {
     if (mode !== "section") {
@@ -152,7 +258,7 @@ export function parseLessonMarkdown(
     sections.push({
       heading: currentHeading || tocEntry?.title || `Section ${sectionIndex + 1}`,
       anchor,
-      body: paragraphsFromBlock(currentBuffer.join("\n")),
+      blocks: blocksFromBuffer(currentBuffer),
     });
     sectionIndex += 1;
     currentBuffer = [];
@@ -160,14 +266,13 @@ export function parseLessonMarkdown(
   };
 
   for (const line of lines) {
-    if (line.startsWith("# ") && mode === "intro" && intro.length === 0) {
-      // Title line — drop, the UI already shows the lesson title.
+    if (!titleSeen && line.startsWith("# ")) {
+      // Drop the lesson title line — the page chrome already shows it.
+      titleSeen = true;
       continue;
     }
     if (line.startsWith("## ")) {
       if (mode === "intro") {
-        intro.push(...paragraphsFromBlock(currentBuffer.join("\n")));
-        currentBuffer = [];
         mode = "section";
       } else {
         flushSection();
@@ -175,16 +280,21 @@ export function parseLessonMarkdown(
       currentHeading = line.slice(3).trim();
       continue;
     }
-    currentBuffer.push(line);
+    if (mode === "intro") {
+      introBuffer.push(line);
+    } else {
+      currentBuffer.push(line);
+    }
   }
 
-  if (mode === "intro") {
-    intro.push(...paragraphsFromBlock(currentBuffer.join("\n")));
-  } else {
+  if (mode === "section") {
     flushSection();
   }
 
-  return { intro, sections };
+  return {
+    intro: blocksFromBuffer(introBuffer),
+    sections,
+  };
 }
 
 export function formatRelativeUpdatedAt(updatedAt: string): string {

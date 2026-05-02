@@ -326,10 +326,49 @@ h1 {
   margin-top: 1.5rem;
 }
 
+.reader-section {
+  scroll-margin-top: 1rem;
+}
+
+.reader-section h3 {
+  font-size: 1.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.reader-section h4 {
+  font-size: 1.1rem;
+  margin: 1rem 0 0.5rem;
+  color: var(--text);
+}
+
+.reader-section p + p {
+  margin-top: 0.85rem;
+}
+
 .toc-list,
-.source-list {
+.source-list,
+.content-list {
   margin: 1rem 0 0;
   padding-left: 1.2rem;
+}
+
+.content-list li {
+  margin-bottom: 0.45rem;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.source-list li + li {
+  margin-top: 0.4rem;
+}
+
+.inline-code {
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  background: rgba(66, 52, 35, 0.08);
+  border-radius: 6px;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.95em;
 }
 
 .compact {

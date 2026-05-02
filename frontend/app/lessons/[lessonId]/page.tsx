@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState, useTransition } from "react";
 
+import { LessonContent } from "../../components/lesson-content";
 import {
   fetchLessonDetail,
   parseLessonMarkdown,
@@ -181,9 +182,7 @@ export default function LessonReaderPage({ params }: LessonReaderPageProps) {
 
           {parsed.intro.length > 0 ? (
             <section className="reader-section">
-              {parsed.intro.map((paragraph, index) => (
-                <p key={`intro-${index}`}>{paragraph}</p>
-              ))}
+              <LessonContent blocks={parsed.intro} />
             </section>
           ) : null}
 
@@ -194,15 +193,13 @@ export default function LessonReaderPage({ params }: LessonReaderPageProps) {
               className="reader-section"
             >
               <h3>{section.heading}</h3>
-              {section.body.map((paragraph, index) => (
-                <p key={`${section.anchor}-${index}`}>{paragraph}</p>
-              ))}
+              <LessonContent blocks={section.blocks} />
             </section>
           ))}
 
-          {lesson.sources.length > 0 ? (
-            <section className="reader-section">
-              <h3>Source References</h3>
+          <section className="reader-section" id="grounding-sources">
+            <h3>Grounding Sources</h3>
+            {lesson.sources.length > 0 ? (
               <ul className="source-list">
                 {lesson.sources.map((source) => (
                   <li key={source.sourceId}>
@@ -220,19 +217,21 @@ export default function LessonReaderPage({ params }: LessonReaderPageProps) {
                         — {source.domain}
                       </span>
                     ) : null}
+                    {source.author ? (
+                      <span className="muted-inline">
+                        {" by "}
+                        {source.author}
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
-            </section>
-          ) : (
-            <section className="reader-section">
-              <h3>Source References</h3>
+            ) : (
               <p className="muted-inline">
-                Source references will appear once the retrieval pipeline starts
-                attaching evidence in later phases.
+                No grounded sources are attached to this lesson yet.
               </p>
-            </section>
-          )}
+            )}
+          </section>
         </article>
       </div>
     </main>
