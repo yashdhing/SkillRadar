@@ -609,7 +609,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - Verified `RetrievalResult.dropped` is populated end-to-end when a tight per-domain cap is in effect, and that accepted sources surface their `preferred_domain` flag in metadata.
   - End-to-end via the orchestration test: persisted lesson `metadata_json["retrieval"]` now carries both `droppedCount` and a `dropReasonCounts` dict.
 - Commits:
-  - update after execution
+  - `0c00ee7` - Add retrieval quality controls: policy, drops, audit trace
 - New Insights / Plan Updates:
   - The packager's filter ordering is intentional: dedup-by-URL fires first so we never count the same URL against later thresholds (e.g., per-domain cap). Document the order alongside the constants if a real packager ever overrides it; reordering changes which drop reason a borderline source is tagged with.
   - `STANDARD_QUALITY_POLICY` ships with `preferred_domains=frozenset()`, so credibility boosts are off by default. When real retrieval lands, this is the single attribute to populate with curated trusted domains. The seam exists; the data is not yet curated.
