@@ -128,6 +128,39 @@ def test_continue_mode_without_active_lesson_records_fallback_in_metadata(
     assert lesson.metadata_json["fallbackReason"] == "no_active_lesson"
 
 
+def test_discover_mode_rotates_past_recently_covered_priorities(client, session) -> None:
+    """End-to-end: a second discover lesson should not repeat the first one."""
+    first = _generate(client, mode="discover_new_topic")
+    second = _generate(client, mode="discover_new_topic")
+
+    first_lesson = session.get(Lesson, first["lessonId"])
+    second_lesson = session.get(Lesson, second["lessonId"])
+    assert first_lesson is not None and second_lesson is not None
+
+    assert (
+        first_lesson.metadata_json["briefTargetTopic"]
+        != second_lesson.metadata_json["briefTargetTopic"]
+    ), "Back-to-back discover lessons should rotate to a different priority."
+    assert "rotated" in second_lesson.metadata_json["briefNotes"].lower()
+
+
+def test_active_lesson_remains_visible_in_recent_lessons_for_non_continue_modes(
+    client, session
+) -> None:
+    """Service should not hide the active lesson from the planner for non-CONTINUE modes."""
+    first = _generate(client, mode="discover_new_topic")
+    activate = client.post(f"/api/v1/lessons/{first['lessonId']}/activate")
+    assert activate.status_code == 200
+
+    second = _generate(client, mode="phrase_seeded", phrase="Kafka exactly-once")
+
+    from skillradar_api.db.models import GenerationRequest
+
+    request_row = session.get(GenerationRequest, second["generationRequestId"])
+    assert request_row is not None
+    assert first["lessonId"] in request_row.input_context_json["recentLessonIds"]
+
+
 def test_recent_lessons_inform_planner_input_context(client, session) -> None:
     first = _generate(client, mode="phrase_seeded", phrase="Kafka exactly-once")
     second = _generate(client, mode="phrase_seeded", phrase="event sourcing")

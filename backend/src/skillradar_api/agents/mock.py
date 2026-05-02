@@ -20,14 +20,149 @@ from skillradar_api.agents.types import (
     LessonBrief,
     LessonShape,
     NoveltyTarget,
+    RecentLessonSummary,
     TopicPlannerInput,
+    UserProfileSummary,
 )
 from skillradar_api.db.enums import LessonMode
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+# Tokens that show up in almost every backend topic — including them in the
+# overlap test makes everything look "recently covered" and would defeat the
+# rotation. They stay searchable in queries; they just don't count for novelty.
+_NOVELTY_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "and",
+        "in",
+        "of",
+        "the",
+        "for",
+        "to",
+        "a",
+        "an",
+        "on",
+        "at",
+        "with",
+        "by",
+    }
+)
 
 
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "section"
+
+
+def _meaningful_tokens(value: str) -> set[str]:
+    """Tokenize a string for novelty/overlap reasoning, dropping stopwords."""
+    return {
+        token
+        for token in _TOKEN_RE.findall(value.lower())
+        if token not in _NOVELTY_STOPWORDS and len(token) > 1
+    }
+
+
+def _has_meaningful_overlap(left: str, right: str) -> bool:
+    """True iff `left` and `right` share at least one non-stopword token."""
+    return bool(_meaningful_tokens(left) & _meaningful_tokens(right))
+
+
+def _recent_corpus(input: TopicPlannerInput) -> tuple[str, ...]:
+    """All recent lesson signal worth checking for novelty."""
+    titles: list[str] = [lesson.title for lesson in input.recent_lessons]
+    if input.active_lesson is not None:
+        titles.append(input.active_lesson.title)
+    seeds: list[str] = [
+        lesson.seed_phrase
+        for lesson in input.recent_lessons
+        if lesson.seed_phrase
+    ]
+    if input.active_lesson is not None and input.active_lesson.seed_phrase:
+        seeds.append(input.active_lesson.seed_phrase)
+    return tuple(titles + seeds)
+
+
+def _select_discover_topic(
+    profile: UserProfileSummary,
+    recent_corpus: tuple[str, ...],
+) -> tuple[str, str | None]:
+    """Pick the first topic priority not covered by recent lessons.
+
+    Falls back to the first priority when every priority overlaps with the
+    recent corpus, with a notes string flagging the saturation. Returns
+    `(target_topic, notes_or_None)`.
+    """
+    priorities = profile.topic_priorities
+    if not priorities:
+        return ("backend and distributed systems growth", None)
+
+    for index, priority in enumerate(priorities):
+        if not any(
+            _has_meaningful_overlap(priority, recent) for recent in recent_corpus
+        ):
+            note = None
+            if index > 0:
+                rotated_word = "priority" if index == 1 else "priorities"
+                note = (
+                    f"Rotated past {index} recently covered {rotated_word} "
+                    "to keep this discover lesson fresh."
+                )
+            return (priority, note)
+
+    return (
+        priorities[0],
+        "All topic priorities have been covered recently; lean into novel "
+        "angles, fresh case studies, or deeper tradeoffs.",
+    )
+
+
+def _skill_anchored_query(search_root: str, profile: UserProfileSummary) -> str | None:
+    """Append a skill the user already works with as a context term.
+
+    Skips skills whose tokens are entirely contained in the search root
+    (would be redundant) and skills that cannot contribute new tokens.
+    """
+    root_tokens = set(_TOKEN_RE.findall(search_root.lower()))
+    for skill in profile.skills:
+        skill_tokens = set(_TOKEN_RE.findall(skill.lower()))
+        if not skill_tokens or skill_tokens.issubset(root_tokens):
+            continue
+        return f"{search_root} {skill}"
+    return None
+
+
+def _novelty_overlap_note(
+    target_topic: str,
+    recent_corpus: tuple[str, ...],
+) -> str | None:
+    for recent in recent_corpus:
+        if _has_meaningful_overlap(target_topic, recent):
+            return (
+                f"Target topic overlaps with the recent '{recent}' lesson; "
+                "lean toward novel angles, fresh case studies, or deeper "
+                "tradeoffs."
+            )
+    return None
+
+
+def _continuation_saturation_note(
+    active_lesson: RecentLessonSummary | None,
+    recent_lessons: tuple[RecentLessonSummary, ...],
+) -> str | None:
+    if active_lesson is None:
+        return None
+    related = [
+        lesson
+        for lesson in recent_lessons
+        if lesson.lesson_id != active_lesson.lesson_id
+        and _has_meaningful_overlap(lesson.title, active_lesson.title)
+    ]
+    if len(related) >= 2:
+        return (
+            f"Already {len(related)} recent lessons relate to '{active_lesson.title}'; "
+            "consider rotating to an adjacent angle on the next generation."
+        )
+    return None
 
 
 def _shape_for_mode(mode: LessonMode, seed_phrase: str | None) -> LessonShape:
@@ -58,6 +193,9 @@ class MockTopicPlannerAgent:
         mode = input.mode
         profile = input.profile
         seed_phrase = (input.seed_phrase or "").strip() or None
+        recent_corpus = _recent_corpus(input)
+
+        rotation_note: str | None = None
 
         if mode == LessonMode.CONTINUE_ACTIVE_LESSON and input.active_lesson:
             target_topic = f"Next layer of {input.active_lesson.title}"
@@ -74,35 +212,44 @@ class MockTopicPlannerAgent:
             )
             search_root = seed_phrase
         else:
-            primary_priority = (
-                profile.topic_priorities[0]
-                if profile.topic_priorities
-                else "backend and distributed systems growth"
+            target_topic, rotation_note = _select_discover_topic(
+                profile, recent_corpus
             )
-            target_topic = primary_priority
             intent = (
                 f"Surface a fresh {profile.role_title}-level lesson aligned "
-                f"to the user's priorities, focused on {primary_priority}."
+                f"to the user's priorities, focused on {target_topic}."
             )
-            search_root = primary_priority
+            search_root = target_topic
 
-        search_queries: tuple[str, ...] = (
+        # Build queries: literal root, two angles, an optional skill-anchored
+        # query that pairs the topic with a stack the user already works in,
+        # and a role-anchored query. Skill anchoring is the personalization
+        # seam — it biases retrieval without locking the planner contract to
+        # any specific stack.
+        queries: list[str] = [
             search_root,
             f"{search_root} case study",
             f"{search_root} failure modes",
-            f"{search_root} {profile.role_title} guide",
-        )
+        ]
+        skill_query = _skill_anchored_query(search_root, profile)
+        if skill_query:
+            queries.append(skill_query)
+        queries.append(f"{search_root} {profile.role_title} guide")
 
-        recent_titles = {lesson.title.lower() for lesson in input.recent_lessons}
-        if input.active_lesson:
-            recent_titles.add(input.active_lesson.title.lower())
-        if target_topic.lower() in recent_titles:
-            notes = (
-                "Target topic overlaps with recent lessons; lean toward novel "
-                "angles, fresh case studies, or deeper tradeoffs."
-            )
+        # Notes describe the most actionable signal: a rotation we already
+        # applied, otherwise a continuation-saturation hint, otherwise a
+        # novelty-overlap warning. Empty notes mean the topic looks fresh.
+        if rotation_note is not None:
+            notes = rotation_note
+        elif (
+            mode == LessonMode.CONTINUE_ACTIVE_LESSON
+            and input.active_lesson is not None
+        ):
+            notes = _continuation_saturation_note(
+                input.active_lesson, input.recent_lessons
+            ) or ""
         else:
-            notes = ""
+            notes = _novelty_overlap_note(target_topic, recent_corpus) or ""
 
         desired_sections: tuple[str, ...]
         if mode == LessonMode.CONTINUE_ACTIVE_LESSON:
@@ -133,7 +280,7 @@ class MockTopicPlannerAgent:
         return LessonBrief(
             intent=intent,
             target_topic=target_topic,
-            search_queries=search_queries,
+            search_queries=tuple(queries),
             shape=_shape_for_mode(mode, seed_phrase),
             novelty=_novelty_for_mode(mode),
             desired_section_titles=desired_sections,

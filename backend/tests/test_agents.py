@@ -229,6 +229,197 @@ def test_lesson_composer_disambiguates_duplicate_section_titles() -> None:
     assert anchors == ["tradeoffs", "tradeoffs-2", "tradeoffs-3"]
 
 
+def test_topic_planner_rotates_past_recently_covered_priorities() -> None:
+    planner = get_default_topic_planner()
+    profile = _profile()
+    recent = (
+        RecentLessonSummary(
+            lesson_id="r1",
+            title="Java/JVM performance deep dive",
+            mode=LessonMode.DISCOVER_NEW_TOPIC,
+        ),
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(
+                mode=LessonMode.DISCOVER_NEW_TOPIC,
+                profile=profile,
+                recent_lessons=recent,
+            )
+        )
+    )
+
+    assert brief.target_topic == "Kafka event-driven architecture"
+    assert "rotated" in brief.notes.lower()
+    assert "fresh" in brief.notes.lower()
+
+
+def test_topic_planner_falls_back_when_all_priorities_covered_recently() -> None:
+    planner = get_default_topic_planner()
+    profile = UserProfileSummary(
+        name="Yash Dhing",
+        role_title="SDE3",
+        topic_priorities=("Java/JVM performance", "Kafka event-driven"),
+    )
+    recent = (
+        RecentLessonSummary(
+            lesson_id="r1",
+            title="Java/JVM performance overview",
+            mode=LessonMode.DISCOVER_NEW_TOPIC,
+        ),
+        RecentLessonSummary(
+            lesson_id="r2",
+            title="Kafka deep dive",
+            mode=LessonMode.DISCOVER_NEW_TOPIC,
+        ),
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(
+                mode=LessonMode.DISCOVER_NEW_TOPIC,
+                profile=profile,
+                recent_lessons=recent,
+            )
+        )
+    )
+
+    assert brief.target_topic == "Java/JVM performance"
+    assert "covered recently" in brief.notes.lower()
+    assert "novel" in brief.notes.lower() or "fresh" in brief.notes.lower()
+
+
+def test_topic_planner_phrase_overlap_with_recent_lesson_emits_novelty_note() -> None:
+    planner = get_default_topic_planner()
+    recent = (
+        RecentLessonSummary(
+            lesson_id="r1",
+            title="Kafka exactly-once internals",
+            mode=LessonMode.PHRASE_SEEDED,
+        ),
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(
+                mode=LessonMode.PHRASE_SEEDED,
+                profile=_profile(),
+                seed_phrase="Kafka exactly-once retries",
+                recent_lessons=recent,
+            )
+        )
+    )
+
+    assert brief.target_topic == "Kafka exactly-once retries"
+    assert "novel" in brief.notes.lower() or "tradeoffs" in brief.notes.lower()
+    assert "Kafka exactly-once internals" in brief.notes
+
+
+def test_topic_planner_continue_mode_flags_continuation_saturation() -> None:
+    planner = get_default_topic_planner()
+    active = RecentLessonSummary(
+        lesson_id="active",
+        title="JVM Latency Investigation Patterns",
+        mode=LessonMode.DISCOVER_NEW_TOPIC,
+    )
+    recent = (
+        RecentLessonSummary(
+            lesson_id="r1",
+            title="JVM Latency Investigation Patterns deep dive",
+            mode=LessonMode.CONTINUE_ACTIVE_LESSON,
+        ),
+        RecentLessonSummary(
+            lesson_id="r2",
+            title="JVM Latency Investigation Patterns case study",
+            mode=LessonMode.CONTINUE_ACTIVE_LESSON,
+        ),
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(
+                mode=LessonMode.CONTINUE_ACTIVE_LESSON,
+                profile=_profile(),
+                active_lesson=active,
+                recent_lessons=recent,
+            )
+        )
+    )
+
+    assert "rotating" in brief.notes.lower() or "adjacent" in brief.notes.lower()
+
+
+def test_topic_planner_appends_skill_anchored_search_query() -> None:
+    planner = get_default_topic_planner()
+    profile = UserProfileSummary(
+        name="Yash Dhing",
+        role_title="SDE3",
+        skills=("Java", "Kafka"),
+        topic_priorities=("Reliability engineering",),
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(mode=LessonMode.DISCOVER_NEW_TOPIC, profile=profile)
+        )
+    )
+
+    queries = [query.lower() for query in brief.search_queries]
+    assert any(query.endswith(" java") for query in queries), queries
+
+
+def test_topic_planner_skips_skill_anchor_when_skill_already_in_root() -> None:
+    planner = get_default_topic_planner()
+    profile = UserProfileSummary(
+        name="Yash Dhing",
+        role_title="SDE3",
+        skills=("Kafka",),
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(
+                mode=LessonMode.PHRASE_SEEDED,
+                profile=profile,
+                seed_phrase="Kafka exactly-once",
+            )
+        )
+    )
+
+    # Without any skill that contributes a *new* token to the root, the
+    # skill-anchored query should be omitted entirely rather than producing
+    # a redundant duplicate of the root.
+    skill_anchored = [
+        query
+        for query in brief.search_queries
+        if query.lower().endswith(" kafka")
+        and query.lower() != "kafka exactly-once"
+    ]
+    assert skill_anchored == []
+
+
+def test_topic_planner_continue_clean_history_leaves_notes_empty() -> None:
+    planner = get_default_topic_planner()
+    active = RecentLessonSummary(
+        lesson_id="active",
+        title="Distributed caching tradeoffs",
+        mode=LessonMode.DISCOVER_NEW_TOPIC,
+    )
+
+    brief = asyncio.run(
+        planner.plan_topic(
+            TopicPlannerInput(
+                mode=LessonMode.CONTINUE_ACTIVE_LESSON,
+                profile=_profile(),
+                active_lesson=active,
+            )
+        )
+    )
+
+    assert brief.notes == ""
+
+
 @pytest.mark.parametrize(
     "mode",
     [

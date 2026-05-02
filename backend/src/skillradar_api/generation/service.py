@@ -106,10 +106,14 @@ def _build_planner_input(
         if active_lesson is not None and request.mode == LessonMode.CONTINUE_ACTIVE_LESSON
         else None
     )
+    # Only filter the active lesson out of `recent_lessons` when it is already
+    # represented in `active_summary` (i.e., CONTINUE mode). For non-CONTINUE
+    # modes the planner should still see the active lesson in history so its
+    # personalization rotation and novelty checks can avoid repeating it.
     recent_summaries = tuple(
         _to_recent_lesson_summary(lesson)
         for lesson in recent_lessons
-        if active_lesson is None or lesson.id != active_lesson.id
+        if active_summary is None or lesson.id != active_lesson.id  # type: ignore[union-attr]
     )
     return TopicPlannerInput(
         mode=request.mode,
