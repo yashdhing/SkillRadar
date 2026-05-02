@@ -383,7 +383,8 @@ This order is recommended, not immutable. If execution reveals a better sequence
     - `GET /api/v1/lessons/does-not-exist` and `POST /api/v1/lessons/does-not-exist/save` both returned `404`.
     - `GET /`, `GET /library`, `GET /lessons/{id}`, and `GET /lessons/does-not-exist` all returned `HTTP/1.1 200 OK` from `next dev`, with the routes wired to the live backend via `NEXT_PUBLIC_SKILLRADAR_API_BASE_URL`.
 - Commits:
-  - To be added after commit
+  - `7576c85` - Add lesson save and library backend endpoints
+  - `58ff7d2` - Wire frontend library and reader to backend with save action
 - New Insights / Plan Updates:
   - SQLite's `DateTime(timezone=True)` round-trips drop tz info on read, so JSON responses for the same lesson can render `savedAt` differently before vs. after a session expire. Idempotency is asserted at the persisted-row level rather than the JSON-string level; later tasks running on PostgreSQL will see consistent ISO-8601 with offsets.
   - The reader currently uses a small inline markdown-to-sections splitter so the existing structured layout keeps working. TASK-011 should replace this with a proper markdown renderer and respect the full heading tree, not just `##` boundaries.
