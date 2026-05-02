@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-008
+- Current active task: None - awaiting review for TASK-009
 
 ## Tasks
 
@@ -427,7 +427,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - `MockLessonComposerAgent` produces complete structured output even with zero sources so retrieval-disabled fallbacks still hit the same contract; the real composer in later phases is expected to refuse unsupported claims when sources are missing — keep this difference explicit in TASK-010.
 
 ### TASK-009 - Implement Modular Retrieval Pipeline Skeleton
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-008
 - Goal: Create the grounded retrieval workflow as independently upgradable stages.
@@ -441,11 +441,29 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - full generalized crawler
 - Implementation Notes:
-  - Pending
+  - Added a dedicated `skillradar_api.retrieval` package split into `types`, `protocols`, `mock`, `pipeline`, and `factory` modules so each stage stays independently replaceable behind its own seam, mirroring the agent layer's split.
+  - Defined retrieval-local frozen-dataclass contracts (`SearchQuery`, `SearchHit`, `FetchedDocument`, `ExtractedContent`, `RankedExtract`) plus `SourceKind` and `FetchStatus` enums. The pipeline converts these into the agent layer's `RankedSource` only at the outer boundary, so persistence and AI providers never see retrieval internals.
+  - Defined runtime-checkable async `Protocol`s for all five stages (`SearchProvider`, `ContentFetcher`, `ContentExtractor`, `SourceRanker`, `EvidencePackager`) so providers can plug in without inheritance.
+  - Implemented deterministic mocks for every stage in `retrieval/mock.py`: synthesized hits per query with stable URLs, a fetcher that simulates blocklisted hosts returning `FetchStatus.BLOCKED` without raising, an HTML-tag stripper as the extractor, a lexical-overlap ranker that combines relevance/quality/novelty, and a packager that dedupes by URL and caps at `max_sources`.
+  - Added a `RetrievalPipeline` orchestrator that runs search -> fetch -> extract -> rank -> package using `asyncio.gather` per stage, deduplicates hits across queries, drops failed fetches before extraction, and records every intermediate output plus fetch failures on the returned `RetrievalResult` for debugging and replay (per `solution.md`).
+  - Added `factory.build_default_retrieval_pipeline()` and per-stage default getters as the single seam future real backends (search APIs, headless fetchers, hosted rankers) plug through.
+  - Did not wire the pipeline into `generation/service.py`; that orchestration belongs to TASK-010 so this task remains an interface-only contribution that preserves modular pipeline boundaries.
 - Verification:
-  - Pending
+  - `make backend-lint`
+  - `make backend-test` — 46 passed (11 new retrieval tests in `backend/tests/test_retrieval.py`).
+  - Verified protocol conformance for every stage via `isinstance(...)` against each `Protocol`.
+  - Verified determinism of `MockSearchProvider`, blank-query short-circuit, and blocklisted URL handling without raising.
+  - Verified the extractor strips HTML, normalizes whitespace, and skips failed fetches.
+  - Verified the ranker orders relevant extracts above unrelated ones and the packager dedupes by URL and respects `max_sources` (including `max_sources=0`).
+  - Verified the end-to-end pipeline produces a non-empty `RankedSource` tuple for a populated brief, returns an empty `RetrievalResult` (with all stage traces empty) when the brief has no queries, and surfaces blocked hits via `fetch_failures` while still composing healthy sources from the rest of the trace.
+- Commits:
+  - `4bfc1ec` - Add modular retrieval pipeline skeleton
 - New Insights / Plan Updates:
-  - Pending
+  - The orchestrator returns `RetrievalResult` with full stage traces. TASK-013 (basic source quality) can extend the ranker and packager without touching this orchestrator, and a future debugging UI can render these traces.
+  - `RankedSource.metadata` already carries `combined_score`, `rationale`, `source_kind`, and `brief_target_topic`. TASK-010 should persist these into `lesson_sources.metadata_json` when storing evidence so retrieval decisions are auditable from the lesson reader, not only at run time.
+  - Stage protocols are async; tests use `asyncio.run` per call. For TASK-010 wiring inside the sync `generation/service.py` request path, prefer running `RetrievalPipeline.run` plus the agent calls together inside one `asyncio.run` boundary to avoid event-loop churn.
+  - `MockEvidencePackager.package` accepts `max_sources=0` as "produce no sources". Production packagers should keep this behavior so the orchestrator can disable evidence injection without code changes.
+  - Solution.md mentions allowlist/denylist filtering as a quality control. TASK-013 should add that as an explicit `EvidencePackager` policy parameter rather than hard-coding into the mock — the protocol seam already supports this.
 
 ### TASK-010 - Generate Structured Lesson Drafts From Grounded Inputs
 - Status: TODO
