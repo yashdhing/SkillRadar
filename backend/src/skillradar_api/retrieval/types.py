@@ -102,3 +102,31 @@ class RankedExtract:
     novelty_score: float
     combined_score: float
     rationale: str | None = None
+
+
+@dataclass(frozen=True)
+class DroppedExtract:
+    """Extract rejected by the evidence packager, with a machine-readable reason.
+
+    Drops are tracked alongside accepted sources so retrieval decisions stay
+    auditable from the persisted lesson trace and from the live debugging
+    output of `RetrievalPipeline.run`.
+    """
+
+    extract: RankedExtract
+    reason: str
+    detail: str | None = None
+
+
+# Stable string identifiers for `DroppedExtract.reason`. Using constants
+# keeps the trace machine-readable across providers and lets the UI / tests
+# match exact reasons without parsing free-form strings.
+DROP_REASON_DUPLICATE_URL = "duplicate_url"
+DROP_REASON_DENIED_DOMAIN = "denied_domain"
+DROP_REASON_NOT_IN_ALLOWLIST = "not_in_allowlist"
+DROP_REASON_PER_DOMAIN_CAP = "per_domain_cap"
+DROP_REASON_LOW_RELEVANCE = "low_relevance"
+DROP_REASON_LOW_QUALITY = "low_quality"
+DROP_REASON_THIN_CONTENT = "thin_content"
+DROP_REASON_MAX_SOURCES = "max_sources_reached"
+

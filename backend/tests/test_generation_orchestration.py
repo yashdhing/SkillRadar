@@ -52,6 +52,10 @@ def test_generated_lesson_metadata_carries_brief_and_retrieval_trace(client, ses
     assert retrieval["hitCount"] >= 1
     assert retrieval["fetchCount"] == retrieval["hitCount"]
     assert retrieval["sourceCount"] >= 1
+    # TASK-013: drop trace is part of the persisted retrieval audit.
+    assert "droppedCount" in retrieval
+    assert "dropReasonCounts" in retrieval
+    assert isinstance(retrieval["dropReasonCounts"], dict)
 
 
 def test_generated_lesson_persists_grounded_lesson_sources(client, session) -> None:

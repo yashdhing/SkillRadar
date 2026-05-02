@@ -16,7 +16,18 @@ from typing import Sequence
 from urllib.parse import quote, urlparse
 
 from skillradar_api.agents.types import LessonBrief, RankedSource
+from skillradar_api.retrieval.protocols import PackagedEvidence
+from skillradar_api.retrieval.quality import RetrievalQualityPolicy
 from skillradar_api.retrieval.types import (
+    DROP_REASON_DENIED_DOMAIN,
+    DROP_REASON_DUPLICATE_URL,
+    DROP_REASON_LOW_QUALITY,
+    DROP_REASON_LOW_RELEVANCE,
+    DROP_REASON_MAX_SOURCES,
+    DROP_REASON_NOT_IN_ALLOWLIST,
+    DROP_REASON_PER_DOMAIN_CAP,
+    DROP_REASON_THIN_CONTENT,
+    DroppedExtract,
     ExtractedContent,
     FetchStatus,
     FetchedDocument,
@@ -151,8 +162,13 @@ class MockSourceRanker:
     """Scores extracts via simple lexical overlap with the brief.
 
     Real rankers will combine credibility, recency, and novelty; this mock
-    keeps the contract honest while remaining deterministic.
+    keeps the contract honest while remaining deterministic. Quality is
+    derived from content richness (word count) plus an optional credibility
+    boost for `RetrievalQualityPolicy.preferred_domains`.
     """
+
+    def __init__(self, policy: RetrievalQualityPolicy | None = None) -> None:
+        self.policy = policy or RetrievalQualityPolicy()
 
     async def rank(
         self,
@@ -176,9 +192,23 @@ class MockSourceRanker:
             else:
                 relevance = 0.0
 
-            quality = min(1.0, extract.word_count / 200.0)
+            richness = min(1.0, extract.word_count / 200.0)
+            credibility_boost = (
+                self.policy.domain_credibility_boost
+                if extract.domain
+                and extract.domain in self.policy.preferred_domains
+                else 0.0
+            )
+            quality = min(1.0, richness + credibility_boost)
             novelty = 1.0 if "case" in extract.title.lower() else 0.6
             combined = (relevance * 0.6) + (quality * 0.25) + (novelty * 0.15)
+
+            rationale = (
+                f"overlap={relevance:.2f} richness={richness:.2f} "
+                f"quality={quality:.2f}"
+            )
+            if credibility_boost > 0:
+                rationale += f" credibility_boost={credibility_boost:.2f}"
 
             ranked.append(
                 RankedExtract(
@@ -187,7 +217,7 @@ class MockSourceRanker:
                     quality_score=quality,
                     novelty_score=novelty,
                     combined_score=combined,
-                    rationale=f"overlap={relevance:.2f} quality={quality:.2f}",
+                    rationale=rationale,
                 )
             )
 
@@ -196,7 +226,25 @@ class MockSourceRanker:
 
 
 class MockEvidencePackager:
-    """Dedupes by URL, caps at `max_sources`, and emits `RankedSource`."""
+    """Dedupes by URL, applies the quality policy, and emits `PackagedEvidence`.
+
+    Drop reasons in the returned `PackagedEvidence.dropped` use the stable
+    `DROP_REASON_*` constants from `retrieval.types` so the orchestrator and
+    UI can match exact reasons without parsing free-form strings.
+
+    Filter ordering (each filter records its own reason and short-circuits):
+        1. duplicate URL          → DROP_REASON_DUPLICATE_URL
+        2. denied_domains         → DROP_REASON_DENIED_DOMAIN
+        3. allowed_domains        → DROP_REASON_NOT_IN_ALLOWLIST
+        4. min_word_count         → DROP_REASON_THIN_CONTENT
+        5. min_relevance_score    → DROP_REASON_LOW_RELEVANCE
+        6. min_quality_score      → DROP_REASON_LOW_QUALITY
+        7. max_per_domain         → DROP_REASON_PER_DOMAIN_CAP
+        8. max_sources reached    → DROP_REASON_MAX_SOURCES
+    """
+
+    def __init__(self, policy: RetrievalQualityPolicy | None = None) -> None:
+        self.policy = policy or RetrievalQualityPolicy()
 
     async def package(
         self,
@@ -204,21 +252,101 @@ class MockEvidencePackager:
         brief: LessonBrief,
         *,
         max_sources: int,
-    ) -> tuple[RankedSource, ...]:
+    ) -> PackagedEvidence:
+        policy = self.policy
         seen_urls: set[str] = set()
-        sources: list[RankedSource] = []
+        per_domain_count: dict[str, int] = {}
+        accepted: list[RankedSource] = []
+        dropped: list[DroppedExtract] = []
 
         for item in ranked:
-            if len(sources) >= max_sources:
-                break
             url = item.content.url
+            domain = item.content.domain or ""
+
             if url in seen_urls:
+                dropped.append(
+                    DroppedExtract(extract=item, reason=DROP_REASON_DUPLICATE_URL)
+                )
                 continue
+
+            if domain and domain in policy.denied_domains:
+                dropped.append(
+                    DroppedExtract(
+                        extract=item,
+                        reason=DROP_REASON_DENIED_DOMAIN,
+                        detail=domain,
+                    )
+                )
+                continue
+
+            if (
+                policy.allowed_domains is not None
+                and domain not in policy.allowed_domains
+            ):
+                dropped.append(
+                    DroppedExtract(
+                        extract=item,
+                        reason=DROP_REASON_NOT_IN_ALLOWLIST,
+                        detail=domain or "<no-domain>",
+                    )
+                )
+                continue
+
+            if item.content.word_count < policy.min_word_count:
+                dropped.append(
+                    DroppedExtract(
+                        extract=item,
+                        reason=DROP_REASON_THIN_CONTENT,
+                        detail=f"word_count={item.content.word_count}",
+                    )
+                )
+                continue
+
+            if item.relevance_score < policy.min_relevance_score:
+                dropped.append(
+                    DroppedExtract(
+                        extract=item,
+                        reason=DROP_REASON_LOW_RELEVANCE,
+                        detail=f"relevance={item.relevance_score:.2f}",
+                    )
+                )
+                continue
+
+            if item.quality_score < policy.min_quality_score:
+                dropped.append(
+                    DroppedExtract(
+                        extract=item,
+                        reason=DROP_REASON_LOW_QUALITY,
+                        detail=f"quality={item.quality_score:.2f}",
+                    )
+                )
+                continue
+
+            if (
+                policy.max_per_domain is not None
+                and per_domain_count.get(domain, 0) >= policy.max_per_domain
+            ):
+                dropped.append(
+                    DroppedExtract(
+                        extract=item,
+                        reason=DROP_REASON_PER_DOMAIN_CAP,
+                        detail=domain or "<no-domain>",
+                    )
+                )
+                continue
+
+            if len(accepted) >= max_sources:
+                dropped.append(
+                    DroppedExtract(extract=item, reason=DROP_REASON_MAX_SOURCES)
+                )
+                continue
+
             seen_urls.add(url)
+            per_domain_count[domain] = per_domain_count.get(domain, 0) + 1
 
             source_id = f"mock-{quote(_slug(item.content.title), safe='-')}"
             snippet = item.content.normalized_text[:240]
-            sources.append(
+            accepted.append(
                 RankedSource(
                     source_id=source_id,
                     url=url,
@@ -235,8 +363,13 @@ class MockEvidencePackager:
                         "rationale": item.rationale,
                         "source_kind": item.content.source_kind.value,
                         "brief_target_topic": brief.target_topic,
+                        "preferred_domain": (
+                            domain in policy.preferred_domains
+                            if domain
+                            else False
+                        ),
                     },
                 )
             )
 
-        return tuple(sources)
+        return PackagedEvidence(accepted=tuple(accepted), dropped=tuple(dropped))

@@ -22,6 +22,7 @@ from skillradar_api.retrieval.protocols import (
     SourceRanker,
 )
 from skillradar_api.retrieval.types import (
+    DroppedExtract,
     ExtractedContent,
     FetchStatus,
     FetchedDocument,
@@ -46,6 +47,7 @@ class RetrievalResult:
     extracts: tuple[ExtractedContent, ...] = ()
     ranked: tuple[RankedExtract, ...] = ()
     fetch_failures: tuple[FetchedDocument, ...] = field(default_factory=tuple)
+    dropped: tuple[DroppedExtract, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ class RetrievalPipeline:
         fetches = await self._fetch_all(hits)
         extracts = await self._extract_all(fetches)
         ranked = await self.ranker.rank(extracts, brief)
-        sources = await self.packager.package(
+        packaged = await self.packager.package(
             ranked, brief, max_sources=self.max_sources
         )
         fetch_failures = tuple(
@@ -73,12 +75,13 @@ class RetrievalPipeline:
         )
 
         return RetrievalResult(
-            sources=tuple(sources),
+            sources=tuple(packaged.accepted),
             hits=tuple(hits),
             fetches=tuple(fetches),
             extracts=tuple(extracts),
             ranked=tuple(ranked),
             fetch_failures=fetch_failures,
+            dropped=tuple(packaged.dropped),
         )
 
     async def _discover(self, brief: LessonBrief) -> Sequence[SearchHit]:

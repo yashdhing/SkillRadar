@@ -7,16 +7,31 @@ plug in through the factory.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, Sequence, runtime_checkable
 
 from skillradar_api.agents.types import LessonBrief, RankedSource
 from skillradar_api.retrieval.types import (
+    DroppedExtract,
     ExtractedContent,
     FetchedDocument,
     RankedExtract,
     SearchHit,
     SearchQuery,
 )
+
+
+@dataclass(frozen=True)
+class PackagedEvidence:
+    """Packager output: accepted shortlist plus per-extract drop reasons.
+
+    The split keeps stage boundaries explicit — the orchestrator can record
+    drop reasons in `RetrievalResult` without re-deriving them, and downstream
+    quality auditing has a single typed surface to read.
+    """
+
+    accepted: tuple[RankedSource, ...]
+    dropped: tuple[DroppedExtract, ...] = ()
 
 
 @runtime_checkable
@@ -70,5 +85,5 @@ class EvidencePackager(Protocol):
         brief: LessonBrief,
         *,
         max_sources: int,
-    ) -> tuple[RankedSource, ...]:
+    ) -> PackagedEvidence:
         ...

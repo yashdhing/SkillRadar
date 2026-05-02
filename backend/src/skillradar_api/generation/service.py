@@ -51,9 +51,18 @@ from skillradar_api.generation.orchestrator import (
 )
 from skillradar_api.retrieval.factory import build_default_retrieval_pipeline
 from skillradar_api.retrieval.pipeline import RetrievalPipeline
+from skillradar_api.retrieval.types import DroppedExtract
 
 RECENT_LESSON_LIMIT = 5
 TARGET_STUDY_MINUTES = 60
+
+
+def _count_drop_reasons(dropped: tuple[DroppedExtract, ...]) -> dict[str, int]:
+    """Bucket drop reasons so the metadata trace stays compact + auditable."""
+    counts: dict[str, int] = {}
+    for entry in dropped:
+        counts[entry.reason] = counts.get(entry.reason, 0) + 1
+    return counts
 
 
 def _slugify(value: str) -> str:
@@ -231,6 +240,8 @@ def _lesson_metadata(
             "extractCount": len(outcome.retrieval.extracts),
             "rankedCount": len(outcome.retrieval.ranked),
             "sourceCount": len(outcome.retrieval.sources),
+            "droppedCount": len(outcome.retrieval.dropped),
+            "dropReasonCounts": _count_drop_reasons(outcome.retrieval.dropped),
         },
     }
 
