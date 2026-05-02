@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-006
+- Current active task: None - awaiting review for TASK-007
 
 ## Tasks
 
@@ -346,7 +346,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - `TASK-007` should keep replacing mock lesson-library data with persisted lesson records, but the active-lesson summary on the home screen is now already sourced from the backend and should stay that way.
 
 ### TASK-007 - Implement Lesson Save And Library Access
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-002, TASK-004
 - Goal: Let the user save generated lessons and access old lessons from the app.
@@ -358,11 +358,37 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - complex filtering or pagination unless needed
 - Implementation Notes:
-  - Pending
+  - Added `LessonRepository.list_all`, `get_with_sources`, and `mark_saved` helpers so persistence-driven library and save flows have explicit query and mutation entry points without leaking SQLAlchemy details into routes.
+  - Added `LessonListResponse`, `LessonDetailResponse`, and `LessonSourceItem` schemas so the library and reader surfaces consume a stable typed contract distinct from generation and active-lesson schemas.
+  - Added `list_lessons`, `get_lesson_detail`, and `save_lesson` service functions and matching `GET /lessons`, `GET /lessons/{id}`, and `POST /lessons/{id}/save` API routes, registered after the static `/active` route so dynamic id matching never shadows it.
+  - Save is idempotent at the service layer: it leaves `saved_at` untouched if it was already set and only flips `status` to `SAVED` when needed, preserving the first-save timestamp on repeat calls.
+  - Replaced the frontend mock-lessons module with a backend-backed `app/lib/lessons-api.ts` that exposes typed list/detail/save fetchers, a small markdown-to-sections parser to feed the existing reader UI, and a relative timestamp helper for the library list.
+  - Rewrote the library page as a client view backed by `GET /api/v1/lessons` with empty-state, loading, and error handling.
+  - Rewrote the lesson reader page as a client view backed by `GET /api/v1/lessons/{id}` with TOC anchors, source links, a save action that hits `POST /lessons/{id}/save`, and dedicated 404/error fallbacks.
+  - Extended the generate panel with a save action next to the activate action and a reader deep link, keeping result-state transitions self-contained.
+  - Removed the hardcoded reader entry from the top nav now that the reader is reached from the library or active-lesson summary, and deleted the obsolete `frontend/app/data/mock-lessons.ts` module.
 - Verification:
-  - Pending
+  - `make backend-install` (worktree-local venv create + editable install of existing deps)
+  - `make backend-lint`
+  - `make backend-test` — 23 passed including 7 new tests in `backend/tests/test_lesson_library.py`
+  - `npm run frontend:typecheck`
+  - `npm run frontend:lint`
+  - `npm run frontend:build`
+  - Booted backend on port 8765 and frontend on port 3765 and verified end-to-end:
+    - `GET /api/v1/lessons` returned `{"items": []}` on a fresh database.
+    - Generated two lessons via `POST /api/v1/lessons/generate` (`discover_new_topic` and `phrase_seeded`).
+    - `GET /api/v1/lessons` returned both lessons with correct status, mode, seedPhrase, and timestamps.
+    - `POST /api/v1/lessons/{id}/save` flipped status to `saved` and populated `savedAt`; a repeat call left the original `savedAt` unchanged in the DB.
+    - `GET /api/v1/lessons/{id}` returned full detail including TOC entries and source list (zero sources for placeholder lessons), with status reflecting the save action.
+    - `GET /api/v1/lessons/does-not-exist` and `POST /api/v1/lessons/does-not-exist/save` both returned `404`.
+    - `GET /`, `GET /library`, `GET /lessons/{id}`, and `GET /lessons/does-not-exist` all returned `HTTP/1.1 200 OK` from `next dev`, with the routes wired to the live backend via `NEXT_PUBLIC_SKILLRADAR_API_BASE_URL`.
+- Commits:
+  - To be added after commit
 - New Insights / Plan Updates:
-  - Pending
+  - SQLite's `DateTime(timezone=True)` round-trips drop tz info on read, so JSON responses for the same lesson can render `savedAt` differently before vs. after a session expire. Idempotency is asserted at the persisted-row level rather than the JSON-string level; later tasks running on PostgreSQL will see consistent ISO-8601 with offsets.
+  - The reader currently uses a small inline markdown-to-sections splitter so the existing structured layout keeps working. TASK-011 should replace this with a proper markdown renderer and respect the full heading tree, not just `##` boundaries.
+  - The library list intentionally shows generated and saved lessons together (status pill differentiates them); confirming `docs/requirements.md` Open Question about whether unsaved lessons remain in history was deferred per requirements discipline rather than silently filtered.
+  - `frontend/app/lib/lessons-api.ts` is the natural home for follow-up frontend fetchers (generation, active-lesson) so the home/page client code can be slimmed in a later refactor.
 
 ### TASK-008 - Define Agent Abstractions For Topic Planning And Lesson Composition
 - Status: TODO
