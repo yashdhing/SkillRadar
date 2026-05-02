@@ -1,6 +1,9 @@
-from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session, selectinload
+
+from skillradar_api.db.enums import LessonStatus
 from skillradar_api.db.models import GenerationRequest, Lesson, LessonSource, UserProfile
 
 
@@ -38,6 +41,26 @@ class LessonRepository:
 
     def clear_active_flags(self) -> None:
         self.session.execute(update(Lesson).values(is_active=False))
+
+    def get_with_sources(self, lesson_id: str) -> Lesson | None:
+        return self.session.scalar(
+            select(Lesson)
+            .options(selectinload(Lesson.sources))
+            .where(Lesson.id == lesson_id)
+        )
+
+    def list_all(self, *, statuses: list[LessonStatus] | None = None) -> list[Lesson]:
+        statement = select(Lesson).order_by(Lesson.created_at.desc())
+        if statuses:
+            statement = statement.where(Lesson.status.in_(statuses))
+        return list(self.session.scalars(statement).all())
+
+    def mark_saved(self, lesson: Lesson) -> Lesson:
+        if lesson.status != LessonStatus.SAVED:
+            lesson.status = LessonStatus.SAVED
+        if lesson.saved_at is None:
+            lesson.saved_at = datetime.now(tz=timezone.utc)
+        return lesson
 
 
 class LessonSourceRepository:
