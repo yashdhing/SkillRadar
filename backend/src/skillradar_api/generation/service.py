@@ -1,18 +1,59 @@
+"""HTTP-facing generation service.
+
+This module is the only place that mixes:
+- request validation,
+- pipeline orchestration (planner → retrieval → composer),
+- and SQLAlchemy persistence.
+
+Each of those concerns is reached through a dedicated seam (`agents.factory`,
+`retrieval.factory`, repository helpers, the orchestrator). Keep the
+boundaries: do not pull retrieval or agent internals into the request handler
+and do not push persistence into the orchestrator.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import re
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from skillradar_api.agents.factory import (
+    get_default_lesson_composer,
+    get_default_topic_planner,
+)
+from skillradar_api.agents.protocols import LessonComposerAgent, TopicPlannerAgent
+from skillradar_api.agents.types import (
+    ComposedLesson,
+    RankedSource,
+    RecentLessonSummary,
+    TopicPlannerInput,
+    UserProfileSummary,
+)
 from skillradar_api.api.schemas import GenerateLessonRequest, GenerateLessonResponse
 from skillradar_api.db.enums import GenerationRequestStatus, LessonMode, LessonStatus
-from skillradar_api.db.models import GenerationRequest, Lesson
+from skillradar_api.db.models import (
+    GenerationRequest,
+    Lesson,
+    LessonSource,
+    UserProfile,
+)
 from skillradar_api.db.repositories import (
     GenerationRequestRepository,
     LessonRepository,
     UserProfileRepository,
 )
+from skillradar_api.generation.orchestrator import (
+    GenerationOutcome,
+    run_generation_pipeline,
+)
+from skillradar_api.retrieval.factory import build_default_retrieval_pipeline
+from skillradar_api.retrieval.pipeline import RetrievalPipeline
+
+RECENT_LESSON_LIMIT = 5
+TARGET_STUDY_MINUTES = 60
 
 
 def _slugify(value: str) -> str:
@@ -20,154 +61,303 @@ def _slugify(value: str) -> str:
     return slug or f"lesson-{uuid4().hex[:8]}"
 
 
-def _build_title(
-    mode: LessonMode,
-    seed_phrase: str | None,
-    active_lesson_title: str | None,
-) -> str:
-    if mode == LessonMode.CONTINUE_ACTIVE_LESSON:
-        if active_lesson_title:
-            return f"Next step after {active_lesson_title}"
-        return "Next step in your current backend study track"
-    if mode == LessonMode.PHRASE_SEEDED and seed_phrase:
-        return f"{seed_phrase.strip()} in practice"
-    return "A fresh lesson for backend and distributed-systems growth"
+def _profile_summary(profile: UserProfile | None) -> UserProfileSummary:
+    if profile is None:
+        return UserProfileSummary(name="SkillRadar User", role_title="senior engineer")
 
-
-def _build_summary(mode: LessonMode, seed_phrase: str | None) -> str:
-    if mode == LessonMode.CONTINUE_ACTIVE_LESSON:
-        return (
-            "A generated draft that continues the current study direction while "
-            "full active-lesson orchestration is still being wired."
-        )
-    if mode == LessonMode.PHRASE_SEEDED and seed_phrase:
-        return (
-            f"A generated draft lesson seeded from '{seed_phrase.strip()}' with "
-            "placeholder structure until the retrieval and composition pipeline lands."
-        )
-    return (
-        "A generated draft lesson that explores a new topic aligned to the "
-        "seeded SkillRadar profile."
+    skills = tuple(skill for skill in profile.skills_json if isinstance(skill, str))
+    career_themes = tuple(
+        entry["theme"]
+        for entry in profile.experience_json
+        if isinstance(entry, dict) and isinstance(entry.get("theme"), str)
+    )
+    topic_priorities = tuple(
+        entry["topic"]
+        for entry in profile.topic_preferences_json
+        if isinstance(entry, dict) and isinstance(entry.get("topic"), str)
+    )
+    return UserProfileSummary(
+        name=profile.name,
+        role_title=profile.role_title,
+        skills=skills,
+        career_themes=career_themes,
+        topic_priorities=topic_priorities,
     )
 
 
-def _build_why_this_matters(role_title: str, mode: LessonMode) -> str:
-    if mode == LessonMode.PHRASE_SEEDED:
-        return (
-            f"This phrase-seeded draft is framed for {role_title}-level practical "
-            "backend growth and can later be enriched with grounded sources."
-        )
-    if mode == LessonMode.CONTINUE_ACTIVE_LESSON:
-        return (
-            f"This draft keeps momentum for an {role_title} study track until "
-            "active-lesson state and retrieval orchestration are connected."
-        )
-    return (
-        f"This draft explores a career-useful direction for an {role_title}, "
-        "using the seeded profile as a lightweight relevance anchor."
+def _to_recent_lesson_summary(lesson: Lesson) -> RecentLessonSummary:
+    return RecentLessonSummary(
+        lesson_id=lesson.id,
+        title=lesson.title,
+        mode=lesson.mode,
+        seed_phrase=lesson.seed_phrase,
     )
 
 
-def _build_toc(mode: LessonMode) -> list[dict[str, str | int]]:
-    base_entries = [
-        {"title": "Why this topic", "anchor": "why-this-topic", "depth": 1},
-        {"title": "Core concepts", "anchor": "core-concepts", "depth": 1},
-        {"title": "Applied walkthrough", "anchor": "applied-walkthrough", "depth": 1},
-    ]
-    if mode == LessonMode.CONTINUE_ACTIVE_LESSON:
-        base_entries.append(
-            {"title": "Next continuation questions", "anchor": "next-questions", "depth": 1},
-        )
-    elif mode == LessonMode.PHRASE_SEEDED:
-        base_entries.append(
-            {"title": "Phrase-specific angles", "anchor": "phrase-angles", "depth": 1},
-        )
-    else:
-        base_entries.append(
-            {"title": "Adjacent follow-ups", "anchor": "adjacent-follow-ups", "depth": 1},
-        )
-    return base_entries
+def _build_planner_input(
+    *,
+    request: GenerateLessonRequest,
+    profile: UserProfileSummary,
+    active_lesson: Lesson | None,
+    recent_lessons: tuple[Lesson, ...],
+) -> TopicPlannerInput:
+    active_summary = (
+        _to_recent_lesson_summary(active_lesson)
+        if active_lesson is not None and request.mode == LessonMode.CONTINUE_ACTIVE_LESSON
+        else None
+    )
+    recent_summaries = tuple(
+        _to_recent_lesson_summary(lesson)
+        for lesson in recent_lessons
+        if active_lesson is None or lesson.id != active_lesson.id
+    )
+    return TopicPlannerInput(
+        mode=request.mode,
+        profile=profile,
+        seed_phrase=request.seed_phrase,
+        active_lesson=active_summary,
+        recent_lessons=recent_summaries,
+    )
 
 
-def _build_content_markdown(title: str, summary: str, toc: list[dict[str, str | int]]) -> str:
-    sections = [
-        f"# {title}",
+def _toc_entries(composed: ComposedLesson) -> list[dict[str, Any]]:
+    """Build the toc_json array. Ordering must match `_assemble_markdown`."""
+    entries: list[dict[str, Any]] = [
+        {"title": "Why this matters", "anchor": "why-this-matters", "depth": 1},
+    ]
+    if composed.learning_objectives:
+        entries.append(
+            {
+                "title": "Learning objectives",
+                "anchor": "learning-objectives",
+                "depth": 1,
+            }
+        )
+    for section in composed.sections:
+        entries.append(
+            {
+                "title": section.heading,
+                "anchor": section.anchor,
+                "depth": section.depth,
+            }
+        )
+    if composed.practical_takeaways:
+        entries.append(
+            {
+                "title": "Practical takeaways",
+                "anchor": "practical-takeaways",
+                "depth": 1,
+            }
+        )
+    if composed.references:
+        entries.append(
+            {"title": "References", "anchor": "references", "depth": 1}
+        )
+    return entries
+
+
+def _assemble_markdown(composed: ComposedLesson) -> str:
+    """Render the composed lesson to markdown.
+
+    Section ordering must mirror `_toc_entries` so the reader's TOC anchors
+    resolve to the right `## ` blocks regardless of which composer wrote the
+    sections.
+    """
+    lines: list[str] = [
+        f"# {composed.title}",
         "",
-        summary,
+        composed.summary,
+        "",
+        "## Why this matters",
+        "",
+        composed.why_this_matters,
         "",
     ]
-    for entry in toc:
-        sections.extend(
-            [
-                f"## {entry['title']}",
-                "",
-                "This is a generated draft section placeholder. A later task will replace this content with grounded lesson material produced from modular retrieval and composition stages.",
-                "",
-            ]
+    if composed.learning_objectives:
+        lines.append("## Learning objectives")
+        lines.append("")
+        for objective in composed.learning_objectives:
+            lines.append(f"- {objective}")
+        lines.append("")
+    for section in composed.sections:
+        lines.append(f"## {section.heading}")
+        lines.append("")
+        lines.append(section.body_markdown)
+        lines.append("")
+    if composed.practical_takeaways:
+        lines.append("## Practical takeaways")
+        lines.append("")
+        for takeaway in composed.practical_takeaways:
+            lines.append(f"- {takeaway}")
+        lines.append("")
+    if composed.references:
+        lines.append("## References")
+        lines.append("")
+        for reference in composed.references:
+            lines.append(f"- [{reference.title}]({reference.url})")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _lesson_metadata(
+    *,
+    outcome: GenerationOutcome,
+    generation_request_id: str,
+    fallback_reason: str | None,
+    active_lesson_available: bool,
+) -> dict[str, Any]:
+    return {
+        "generationRequestId": generation_request_id,
+        "fallbackReason": fallback_reason,
+        "activeLessonAvailable": active_lesson_available,
+        "briefShape": outcome.brief.shape.value,
+        "briefNovelty": outcome.brief.novelty.value,
+        "briefIntent": outcome.brief.intent,
+        "briefTargetTopic": outcome.brief.target_topic,
+        "briefSearchQueries": list(outcome.brief.search_queries),
+        "briefDesiredSections": list(outcome.brief.desired_section_titles),
+        "briefNotes": outcome.brief.notes,
+        "learningObjectives": list(outcome.composed.learning_objectives),
+        "practicalTakeaways": list(outcome.composed.practical_takeaways),
+        "composerMetadata": dict(outcome.composed.metadata),
+        "retrieval": {
+            "hitCount": len(outcome.retrieval.hits),
+            "fetchCount": len(outcome.retrieval.fetches),
+            "fetchFailureCount": len(outcome.retrieval.fetch_failures),
+            "extractCount": len(outcome.retrieval.extracts),
+            "rankedCount": len(outcome.retrieval.ranked),
+            "sourceCount": len(outcome.retrieval.sources),
+        },
+    }
+
+
+def _build_lesson_sources(sources: tuple[RankedSource, ...]) -> list[LessonSource]:
+    rows: list[LessonSource] = []
+    for source in sources:
+        rows.append(
+            LessonSource(
+                url=source.url,
+                title=source.title,
+                domain=source.domain,
+                author=source.author,
+                published_at=source.published_at,
+                relevance_score=source.relevance_score,
+                quality_score=source.quality_score,
+                novelty_score=source.novelty_score,
+                content_snapshot=source.snippet,
+                metadata_json={
+                    "agentSourceId": source.source_id,
+                    **dict(source.metadata),
+                },
+            )
         )
-    return "\n".join(sections)
+    return rows
 
 
 def create_generation_request(
     session: Session,
     request: GenerateLessonRequest,
+    *,
+    planner: TopicPlannerAgent | None = None,
+    composer: LessonComposerAgent | None = None,
+    retrieval_pipeline: RetrievalPipeline | None = None,
 ) -> GenerateLessonResponse:
+    """Create a generation request, run the modular pipeline, and persist results.
+
+    Optional `planner`/`composer`/`retrieval_pipeline` arguments exist purely
+    to allow tests and future feature flags to swap a stage in without
+    monkey-patching the factory module.
+    """
     generation_request_repo = GenerationRequestRepository(session)
     lesson_repo = LessonRepository(session)
     profile_repo = UserProfileRepository(session)
 
-    profile = profile_repo.get_first()
+    profile_row = profile_repo.get_first()
+    profile = _profile_summary(profile_row)
     active_lesson = lesson_repo.get_active()
     fallback_reason = (
         "no_active_lesson"
         if request.mode == LessonMode.CONTINUE_ACTIVE_LESSON and active_lesson is None
         else None
     )
+    recent_lessons_all = tuple(lesson_repo.list_all()[:RECENT_LESSON_LIMIT])
 
-    title = _build_title(request.mode, request.seed_phrase, active_lesson.title if active_lesson else None)
-    summary = _build_summary(request.mode, request.seed_phrase)
-    toc = _build_toc(request.mode)
+    planner_input = _build_planner_input(
+        request=request,
+        profile=profile,
+        active_lesson=active_lesson,
+        recent_lessons=recent_lessons_all,
+    )
 
     generation_request = generation_request_repo.add(
         GenerationRequest(
             mode=request.mode,
             seed_phrase=request.seed_phrase,
             input_context_json={
-                "profileId": profile.id if profile else None,
+                "profileId": profile_row.id if profile_row else None,
                 "activeLessonId": active_lesson.id if active_lesson else None,
                 "activeLessonAvailable": active_lesson is not None,
+                "recentLessonIds": [lesson.id for lesson in recent_lessons_all],
+                "fallbackReason": fallback_reason,
             },
             status=GenerationRequestStatus.RUNNING,
         )
     )
     session.flush()
 
-    slug = f"{_slugify(title)}-{generation_request.id[:8]}"
+    pipeline = retrieval_pipeline or build_default_retrieval_pipeline()
+    planner_agent = planner or get_default_topic_planner()
+    composer_agent = composer or get_default_lesson_composer()
+
+    try:
+        outcome = asyncio.run(
+            run_generation_pipeline(
+                planner_input=planner_input,
+                retrieval_pipeline=pipeline,
+                planner=planner_agent,
+                composer=composer_agent,
+                target_minutes=TARGET_STUDY_MINUTES,
+            )
+        )
+    except Exception as error:  # pragma: no cover - defensive guard
+        generation_request.status = GenerationRequestStatus.FAILED
+        generation_request.error_message = str(error)
+        session.flush()
+        raise
+
+    composed = outcome.composed
+    slug = f"{_slugify(composed.title)}-{generation_request.id[:8]}"
     lesson = lesson_repo.add(
         Lesson(
-            title=title,
+            title=composed.title,
             slug=slug,
             status=LessonStatus.GENERATED,
             mode=request.mode,
             seed_phrase=request.seed_phrase,
-            summary=summary,
-            estimated_study_minutes=60,
-            why_this_matters=_build_why_this_matters(
-                profile.role_title if profile else "senior engineer",
-                request.mode,
+            summary=composed.summary,
+            estimated_study_minutes=composed.estimated_study_minutes,
+            why_this_matters=composed.why_this_matters,
+            content_markdown=_assemble_markdown(composed),
+            toc_json=_toc_entries(composed),
+            metadata_json=_lesson_metadata(
+                outcome=outcome,
+                generation_request_id=generation_request.id,
+                fallback_reason=fallback_reason,
+                active_lesson_available=active_lesson is not None,
             ),
-            content_markdown=_build_content_markdown(title, summary, toc),
-            toc_json=toc,
-            metadata_json={
-                "generationRequestId": generation_request.id,
-                "placeholder": True,
-                "activeLessonAvailable": active_lesson is not None,
-                "fallbackReason": fallback_reason,
-            },
             is_active=False,
-            parent_lesson_id=active_lesson.id if request.mode == LessonMode.CONTINUE_ACTIVE_LESSON and active_lesson else None,
+            parent_lesson_id=(
+                active_lesson.id
+                if request.mode == LessonMode.CONTINUE_ACTIVE_LESSON and active_lesson
+                else None
+            ),
         )
     )
+    session.flush()
+
+    for source_row in _build_lesson_sources(outcome.retrieval.sources):
+        source_row.lesson_id = lesson.id
+        session.add(source_row)
     session.flush()
 
     generation_request.status = GenerationRequestStatus.COMPLETED

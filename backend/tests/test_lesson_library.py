@@ -66,9 +66,18 @@ def test_get_lesson_detail_returns_full_payload_with_sources(client, session) ->
     assert payload["contentMarkdown"]
     assert isinstance(payload["toc"], list) and len(payload["toc"]) >= 1
     assert payload["toc"][0]["anchor"]
-    assert len(payload["sources"]) == 1
-    assert payload["sources"][0]["url"] == "https://example.com/grounding"
-    assert payload["sources"][0]["domain"] == "example.com"
+
+    # Retrieval-grounded sources land alongside the manually attached one.
+    source_urls = {source["url"] for source in payload["sources"]}
+    assert "https://example.com/grounding" in source_urls
+    assert len(payload["sources"]) >= 1
+    grounding = next(
+        source
+        for source in payload["sources"]
+        if source["url"] == "https://example.com/grounding"
+    )
+    assert grounding["domain"] == "example.com"
+    assert grounding["author"] == "Test Author"
 
 
 def test_get_lesson_detail_returns_404_for_unknown_lesson(client) -> None:
