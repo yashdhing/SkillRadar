@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-007
+- Current active task: None - awaiting review for TASK-008
 
 ## Tasks
 
@@ -392,7 +392,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - `frontend/app/lib/lessons-api.ts` is the natural home for follow-up frontend fetchers (generation, active-lesson) so the home/page client code can be slimmed in a later refactor.
 
 ### TASK-008 - Define Agent Abstractions For Topic Planning And Lesson Composition
-- Status: TODO
+- Status: DONE
 - Priority: P1
 - Depends on: TASK-001, TASK-002
 - Goal: Create stable interfaces so the app can use an AI agent without coupling the whole app to a single provider.
@@ -404,11 +404,27 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - production provider integration if not yet configured
 - Implementation Notes:
-  - Pending
+  - Added a dedicated `skillradar_api.agents` package split into `types`, `protocols`, `mock`, and `factory` modules so data contracts, structural interfaces, deterministic implementations, and provider selection each live behind a separate seam.
+  - Defined frozen-dataclass data contracts (`UserProfileSummary`, `RecentLessonSummary`, `TopicPlannerInput`, `LessonBrief`, `RankedSource`, `ComposeLessonInput`, `ComposedLessonSection`, `ComposedLessonReference`, `ComposedLesson`) plus `LessonShape` and `NoveltyTarget` enums so pipeline stages exchange typed payloads without leaking SQLAlchemy or Pydantic types.
+  - Defined `TopicPlannerAgent` and `LessonComposerAgent` as `@runtime_checkable` async `Protocol`s so the factory can validate any future provider adapter without forcing inheritance and so pipeline code can depend purely on the interface.
+  - Implemented `MockTopicPlannerAgent` with deterministic mode-aware briefs: phrase-seeded uses the seed phrase, continue-active uses the active lesson title, discover falls back to the user's first topic priority, and recent-lesson overlaps surface a novelty hint in the brief notes.
+  - Implemented `MockLessonComposerAgent` that derives sections, anchors, references, learning objectives, and metadata from the brief and source bundle, and disambiguates duplicate section anchors deterministically.
+  - Added `get_default_topic_planner` and `get_default_lesson_composer` factory entrypoints so future providers (hosted models in TASK-010+) swap in without touching call sites.
+  - Did not wire the agents into the existing `generation/service.py`; that orchestration is intentionally deferred to TASK-009 (retrieval) and TASK-010 (composition wiring) so this task remains an interface-only contribution and preserves modular pipeline boundaries.
 - Verification:
-  - Pending
+  - `make backend-lint`
+  - `make backend-test` — 35 passed (12 new agent tests in `backend/tests/test_agents.py`).
+  - Verified protocol conformance via `isinstance(planner, TopicPlannerAgent)` / `isinstance(composer, LessonComposerAgent)`.
+  - Verified planner determinism (same input -> same `LessonBrief`).
+  - Verified mode-specific planner behavior across all three `LessonMode`s, novelty hint on recent-lesson overlap, and search-query non-emptiness.
+  - Verified composer output preserves required `ComposedLesson` fields, anchor uniqueness on duplicate section titles, citation flow when sources are present, and graceful degradation when no sources are provided.
+- Commits:
+  - `1670191` - Add agent abstractions for topic planning and lesson composition
 - New Insights / Plan Updates:
-  - Pending
+  - The data contracts now formalize `LessonShape` and `NoveltyTarget`. TASK-010 should map these onto the persisted `Lesson` row's `metadata_json` so library, ranking, and personalization (TASK-012, TASK-013) can read them later without re-deriving from the brief.
+  - `RankedSource` deliberately mirrors but does not import `LessonSource`, keeping the agent layer free of SQLAlchemy. TASK-009 (retrieval pipeline) will own the conversion at its boundary.
+  - Mock agents are async; current call sites (`generation/service.create_generation_request`) are sync. TASK-010 will need to either run the agent in an async route or use `asyncio.run(...)` at a clear boundary; the factory keeps that decision local rather than smearing it through the codebase.
+  - `MockLessonComposerAgent` produces complete structured output even with zero sources so retrieval-disabled fallbacks still hit the same contract; the real composer in later phases is expected to refuse unsupported claims when sources are missing — keep this difference explicit in TASK-010.
 
 ### TASK-009 - Implement Modular Retrieval Pipeline Skeleton
 - Status: TODO
