@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-011
+- Current active task: None - awaiting review for TASK-012
 
 ## Tasks
 
@@ -540,7 +540,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - The current reader markup still calls the section "Source References" in earlier comments; renamed to "Grounding Sources" in the TASK-011 update to better reflect the retrieval pipeline's evidence framing. If a future task brings back human-curated reading lists, that distinction matters and should not collapse back into one section.
 
 ### TASK-012 - Personalize Topic Selection Using Lesson History And User Profile
-- Status: TODO
+- Status: DONE
 - Priority: P2
 - Depends on: TASK-003, TASK-006, TASK-010
 - Goal: Improve topic relevance so follow-up, adjacent, and exploratory lessons feel intentional.
@@ -551,11 +551,29 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - advanced reinforcement learning or analytics
 - Implementation Notes:
-  - Pending
+  - Replaced the planner's "first topic priority always wins" heuristic with `_select_discover_topic`, a deterministic rotation that returns the first profile priority whose meaningful tokens don't overlap with any recent lesson title or seed phrase. Falls back to the first priority with an explicit "all priorities covered recently" note when the user's whole priority list looks saturated.
+  - Replaced the literal-equality novelty check with token-overlap reasoning across all modes (`_meaningful_tokens` + `_has_meaningful_overlap`) and a small stopword list so common backend words don't make every topic look "recently covered". Kept the helper at the bottom of the planner so future real providers can reuse the same primitive without depending on the mock implementation.
+  - Continue mode now also surfaces a continuation-saturation note (`_continuation_saturation_note`) when at least two recent lessons already overlap with the active lesson title, nudging the user toward an adjacent angle on the next generation rather than another deep continuation.
+  - Added `_skill_anchored_query`: when the user's profile lists a skill that isn't already represented in the search root, the planner appends one extra search query pairing the topic with that skill. This gives retrieval a personalization-bias term without locking the planner contract to any specific stack. Skipped automatically when no skill contributes new tokens, so phrase-seeded queries that already mention the skill don't get a redundant duplicate.
+  - Fixed a bug in `generation/service._build_planner_input`: the active lesson was being filtered out of `recent_lessons` even for non-CONTINUE modes, hiding it from the planner. The filter now only runs when `active_summary is not None` (i.e., CONTINUE mode), so the planner can avoid repeating the active lesson during phrase-seeded or discover generation.
+  - Did not change the agent protocols, retrieval pipeline, persistence schema, or composer; this task is purely a tightening of `MockTopicPlannerAgent` plus the service-side planner-input wiring. Real providers can implement the same `TopicPlannerAgent` protocol with arbitrarily richer personalization without touching call sites.
 - Verification:
-  - Pending
+  - `make backend-lint`
+  - `make backend-test` — 62 passed (7 new planner unit tests in `test_agents.py` plus 2 new orchestration tests in `test_generation_orchestration.py`).
+  - Verified DISCOVER rotation: with one recent lesson overlapping the first priority, the planner picks the second priority and emits a "rotated past 1 recently covered priority" note containing both "rotated" and "fresh".
+  - Verified all-priorities-saturated fallback: when every priority overlaps with recent lessons, the planner returns the first priority with notes containing both "covered recently" and "novel" / "fresh".
+  - Verified phrase-seeded novelty: a seed phrase that token-overlaps with a recent lesson title produces a notes string referencing the specific overlapping lesson title.
+  - Verified continue-mode saturation: with two recent lessons already overlapping the active lesson, the planner emits a "rotating" / "adjacent" hint.
+  - Verified skill-anchored query inclusion: profile skills that contribute new tokens to the root produce an extra `{root} {skill}` search query; redundant skills are skipped.
+  - Verified clean-history paths: continue mode with no recent overlaps and discover mode with no recent lessons both leave `notes == ""` so empty notes remain a meaningful "no signal" indicator.
+  - End-to-end (via the orchestration tests): two consecutive `discover_new_topic` requests produce different `briefTargetTopic` values and the second lesson's `briefNotes` contains "rotated"; an active-lesson-followed-by-phrase-seeded flow keeps the first lesson visible in `generation_requests.input_context_json.recentLessonIds`.
+- Commits:
+  - `dcbea7b` - Personalize topic selection from history and profile
 - New Insights / Plan Updates:
-  - Pending
+  - The token-overlap helper deliberately filters short tokens (length ≤ 1) and a tight stopword list. If real users seed phrases with single-character names or symbols-heavy strings, that filter may need to relax — but it's a localized change with no API impact.
+  - `_skill_anchored_query` returns at most one extra query. When TASK-013 lands ranking quality controls, the packager will dedupe by URL, so adding more skill-anchored queries here would only widen retrieval without surfacing extra evidence. If multi-skill personalization becomes useful, surface it through the brief's `desired_section_titles` instead.
+  - The continuation-saturation hint is a notes-only signal today; the orchestrator does not auto-pivot to discover mode. That fits the "preserve unresolved product decisions" guardrail (auto-mode-switching is not a confirmed requirement) but TASK-014 / TASK-015 should revisit whether to surface this as a UI prompt to the user during continue-mode generation.
+  - The service fix for active-lesson visibility addressed a previously silent gap: prior to this task, marking a lesson active would also exclude it from any future planner's history view, so phrase-seeded or discover lessons could repeat its topic without any signal. Worth flagging in TASK-015 reconciliation as an example of the kind of cross-task gap the dynamic backlog is meant to surface.
 
 ### TASK-013 - Add Basic Source Quality Controls
 - Status: TODO
