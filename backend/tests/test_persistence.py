@@ -104,3 +104,42 @@ def test_only_one_active_lesson_can_exist(session) -> None:
     else:
         raise AssertionError("Expected unique active lesson constraint to be enforced")
 
+
+
+def test_list_all_uses_id_tiebreaker_when_created_at_ties(session) -> None:
+    """Back-to-back inserts share a created_at on SQLite; id desc tiebreaks."""
+    from datetime import datetime, timezone
+
+    shared_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    lessons = []
+    for slug, lesson_id in [
+        ("alpha", "11111111-1111-1111-1111-111111111111"),
+        ("beta", "33333333-3333-3333-3333-333333333333"),
+        ("gamma", "22222222-2222-2222-2222-222222222222"),
+    ]:
+        lesson = Lesson(
+            id=lesson_id,
+            title=slug,
+            slug=slug,
+            status=LessonStatus.GENERATED,
+            mode=LessonMode.DISCOVER_NEW_TOPIC,
+            summary=f"{slug} summary",
+            estimated_study_minutes=60,
+            why_this_matters="x",
+            content_markdown=f"# {slug}",
+            toc_json=[{"title": "x", "anchor": "x", "depth": 1}],
+            metadata_json={},
+            created_at=shared_ts,
+            updated_at=shared_ts,
+        )
+        lessons.append(lesson)
+        session.add(lesson)
+    session.commit()
+
+    listed = LessonRepository(session).list_all()
+    # All three share the same created_at; id desc decides the order.
+    assert [item.id for item in listed] == sorted(
+        [item.id for item in listed], reverse=True
+    )
+    # Specifically: beta(3...) > gamma(2...) > alpha(1...).
+    assert [item.slug for item in listed] == ["beta", "gamma", "alpha"]

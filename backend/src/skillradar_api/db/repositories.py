@@ -50,7 +50,12 @@ class LessonRepository:
         )
 
     def list_all(self, *, statuses: list[LessonStatus] | None = None) -> list[Lesson]:
-        statement = select(Lesson).order_by(Lesson.created_at.desc())
+        # Tiebreak by id so back-to-back inserts (which can share a
+        # sub-second `created_at` on SQLite) still produce a deterministic
+        # library list order.
+        statement = select(Lesson).order_by(
+            Lesson.created_at.desc(), Lesson.id.desc()
+        )
         if statuses:
             statement = statement.where(Lesson.status.in_(statuses))
         return list(self.session.scalars(statement).all())
