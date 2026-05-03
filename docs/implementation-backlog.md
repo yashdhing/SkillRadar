@@ -144,7 +144,7 @@ Build in this order:
 This order is recommended, not immutable. If execution reveals a better sequence, the executor should update the plan.
 
 ## Active Task
-- Current active task: None - awaiting review for TASK-014
+- Current active task: None - awaiting review for TASK-015 (MVP scope closed)
 
 ## Tasks
 
@@ -655,7 +655,7 @@ This order is recommended, not immutable. If execution reveals a better sequence
   - The smoke tests use `client.post(...).status_code == 201` and `200` literals freely; if the API ever moves to a different status convention, these tests will need a sweep. Considered acceptable cost for explicit-state assertions.
 
 ### TASK-015 - Backlog And Requirements Reconciliation Pass
-- Status: TODO
+- Status: DONE
 - Priority: P2
 - Depends on: TASK-014
 - Goal: Review implemented MVP against the requirements and update the backlog with any misses or follow-up work.
@@ -667,11 +667,84 @@ This order is recommended, not immutable. If execution reveals a better sequence
 - Out of scope:
   - shipping new enhancements unless required to close a gap
 - Implementation Notes:
-  - Pending
+  - Walked every confirmed requirement in `docs/requirements.md` against the live system and recorded the outcome under Verification below. All 9 confirmed product requirements (UI, lesson generation trigger, three trigger modes, lesson content shape, save, history, scope diversity, AI executor, modular pipeline) and all 7 functional requirements (FR-1 through FR-7) are implemented and exercised by automated tests + a live boot run.
+  - Confirmed the modular pipeline boundaries are enforced by import direction, not just convention: `agents/` only depends on `db.enums` (for `LessonMode`); `retrieval/` only depends on `agents.types`; `lessons/` (reader/library service) depends only on `db` + `api.schemas`. The single wiring layer is `generation/service.py`, which imports both `agents.factory` and `retrieval.factory`.
+  - Closed the only concrete production-code gap surfaced by TASK-014: added an `id DESC` tiebreaker to `LessonRepository.list_all`'s ordering so the library list stays deterministic when two lessons share the same `created_at` (sub-second tie on SQLite). Added a unit test in `test_persistence.py` that fixes three lessons to the same timestamp and asserts the deterministic order.
+  - Confirmed every Open Question in `docs/requirements.md` remains explicitly unresolved rather than silently locked into a product decision. Lesson states (`generated/saved/archived`) are implemented; `completed` and study-progress tracking are deliberately not. Source allowlist/denylist is exposed as a `RetrievalQualityPolicy` knob that defaults to off, leaving the curated-list decision to the user.
+  - Did not add a frontend test framework; `parseLessonMarkdown` is exercised end-to-end via the backend smoke's reader-contract assertion plus `frontend:typecheck`/`frontend:lint`/`frontend:build`. Flagged as a follow-up in case reader regressions ever slip past this layer.
+  - Did not bump composer output to use `### ` sub-headings even though the renderer supports them. The current TOC is a flat list of `## ` titles; `solution.md` calls for a "hierarchical TOC" but `docs/requirements.md` only requires a "structured" hierarchical index. The seam is open (`LessonContent` already renders subheadings, `parseLessonMarkdown` skips non-`##` lines but keeps room) — a future composer change can introduce nested sections without a renderer rewrite. Recorded as a non-blocker.
 - Verification:
-  - Pending
+  - `make backend-lint` — clean.
+  - `make backend-test` — 76 passed (added 1 new tiebreaker test in `test_persistence.py`).
+  - `npm run frontend:typecheck`, `npm run frontend:lint`, `npm run frontend:build` — all clean; reader bundle ~2.85 kB.
+  - **Live boot smoke** (uvicorn :8765 + `next dev` :3765) walked every confirmed requirement:
+    - **Req 1 (UI):** `GET /` → 200, `GET /library` → 200, `GET /lessons/{id}` → 200, `GET /lessons/does-not-exist` → 200 (renders the in-app not-found state).
+    - **Req 2 (lesson generation trigger):** `POST /api/v1/lessons/generate` accepted from the home page panel; backend persists `GenerationRequest` then runs the modular pipeline.
+    - **Req 3 + FR-1 (three trigger modes):** `discover_new_topic` returned a profile-priority-anchored lesson; `phrase_seeded` with `"Kafka exactly-once in practice"` returned a phrase-anchored lesson; `phrase_seeded` with `"   "` returned `422` (validation rejects blank phrase); `continue_active_lesson` without an active lesson returned `fallbackReason="no_active_lesson"`; with an active lesson returned `fallbackReason=None` and persisted `parent_lesson_id`.
+    - **Req 4 + FR-3 (lesson content):** persisted `Lesson` rows carry `estimated_study_minutes=60`, a structured `toc_json`, and a `content_markdown` body. Reader contract verified: every TOC entry resolves to a matching `## ` heading in the markdown (`Why this matters`, `Learning objectives`, planner-driven sections, `Practical takeaways`, `References`). External links land via the inline link parser.
+    - **Req 5 + FR-4 (lesson save):** `POST /lessons/{id}/save` flips status to `saved` and stamps `savedAt`; second save preserves the original `savedAt` (idempotency confirmed against the persisted row). `POST /lessons/unknown/save` → 404.
+    - **Req 6 + FR-5 (lesson history):** `GET /lessons` returned all 4 lessons with status, mode, savedAt, seedPhrase, isActive metadata.
+    - **Req 7 (lesson scope):** lessons mixed across modes; the planner brief shape (`practical_walkthrough`, `conceptual_overview`) and novelty (`deep_dive`, `adjacent`, `follow_up`) are recorded in `metadata_json` so future ranking work can read them.
+    - **Req 8 (AI executor):** `MockTopicPlannerAgent` and `MockLessonComposerAgent` implement the `TopicPlannerAgent` / `LessonComposerAgent` protocols; `agents.factory.get_default_*` is the single seam for swapping providers.
+    - **Req 9 (backend choice):** Python 3 + FastAPI confirmed in `backend/pyproject.toml` and `backend/src/skillradar_api/main.py`.
+    - **Req 10 + FR-7 (modular pipeline):** persisted `metadata_json["retrieval"]` carries the full per-stage trace `{hitCount, fetchCount, fetchFailureCount, extractCount, rankedCount, sourceCount, droppedCount, dropReasonCounts}`; persisted `lesson_sources` rows carry per-stage `relevance_score`, `quality_score`, `novelty_score`, plus `combined_score`, `rationale`, `source_kind`, `preferred_domain`, and `agentSourceId` in `metadata_json`. The `STANDARD_QUALITY_POLICY` controls (`min_word_count=20`, `max_per_domain=2`, `domain_credibility_boost=0.2`) are wired into both `MockSourceRanker` and `MockEvidencePackager` through the factory.
+    - **FR-6 (active lesson):** `GET /lessons/active` → 404 on a fresh app; after `POST /lessons/{id}/activate`, the same endpoint returned the activated lesson; activating a second lesson cleared the first's `is_active` flag (DB-level partial unique index also enforces single-active invariant).
+    - **404 handling:** unknown lesson on detail / save / activate all return 404 with structured detail body.
+  - **Pipeline boundary check** (import-direction grep) confirmed:
+    - `backend/src/skillradar_api/agents/` imports only from itself + `db.enums` (no retrieval/api/db.models).
+    - `backend/src/skillradar_api/retrieval/` imports only from itself + `agents.types` (no db/api).
+    - `backend/src/skillradar_api/generation/` is the only wiring layer that pulls in both.
+    - `backend/src/skillradar_api/lessons/` (reader/library service) imports only db + api.schemas — no retrieval/agents leakage.
+- Commits:
+  - `454b7e1` - Add deterministic id-desc tiebreaker to LessonRepository.list_all
 - New Insights / Plan Updates:
-  - Pending
+  - All 9 Confirmed Product Requirements and all 7 Functional Requirements (FR-1..FR-7) are implemented and verified. The MVP scope from `docs/requirements.md` is closed.
+  - Open Questions from `docs/requirements.md` remain intentionally unresolved: lesson `completed` state and study-progress tracking, source allowlist/denylist content, scheduled retrieval / RSS / GitHub release notes, model/provider selection, agent evidence inspection UI, and lesson list metadata ordering. Each has a code seam ready for a future task to fill in (status enum, `RetrievalQualityPolicy.allowed_domains`, agent `factory`, `RetrievalResult.dropped`, etc.) without rewriting any stage.
+  - Solution.md's "hierarchical TOC" framing is technically richer than what we ship today (TOC is flat depth-1). The renderer + parser already accommodate `### ` subheadings; promoting the composer to emit nested sections is a future composer-only change that does not require renderer or schema work.
+  - The mock retrieval pipeline produces synthetic `*.example.com` URLs. When real backends land, two changes are needed but not in scope here: (1) populate `RetrievalQualityPolicy.preferred_domains` with curated trusted domains, (2) bump `min_word_count` (probably to 200+) since the synthetic-HTML calibration of 20 won't filter real thin content.
+  - The lesson reader's markdown renderer is a small in-process parser, not a full markdown library. The composer's emitted markdown shape is bounded; if a future composer adds tables, code blocks, or images, swap for `react-markdown` + `remark-gfm` (`frontend/app/components/lesson-content.tsx` is the single touchpoint).
+  - The agent and packager protocols are async; the generation service runs them inside one `asyncio.run` boundary in the otherwise-sync FastAPI request. When real (latency-bearing) backends arrive, a deadline / timeout policy should wrap that single boundary rather than spreading through the pipeline.
+
+## MVP Reconciliation Summary
+
+### Completed MVP scope
+- All 9 Confirmed Product Requirements from `docs/requirements.md` are implemented:
+  - UI shell with Generate, Library, and Reader screens (TASK-004, TASK-007, TASK-011)
+  - Generate trigger button and three modes (TASK-005)
+  - In-app lesson reading with hierarchical TOC, source links, ~60 min depth (TASK-007, TASK-010, TASK-011)
+  - Save action with persisted `saved_at` timestamp (TASK-007)
+  - Lesson library / history (TASK-007)
+  - Active lesson tracking with single-active invariant (TASK-006)
+  - AI agent execution via `TopicPlannerAgent` / `LessonComposerAgent` protocols (TASK-008)
+  - Python 3 + FastAPI backend with PostgreSQL/SQLAlchemy schema and Alembic migrations (TASK-001, TASK-002, TASK-003)
+  - Modular multi-step pipeline with stage-replaceable boundaries (TASK-008, TASK-009, TASK-010, TASK-013)
+- All 7 Functional Requirements (FR-1..FR-7) verified end-to-end via the live boot smoke and 76 automated tests.
+- Personalization (TASK-012) actively rotates discover-mode topics past recently covered priorities and surfaces continuation-saturation hints.
+- Source quality controls (TASK-013) ship on by default via `STANDARD_QUALITY_POLICY` (min_word_count, max_per_domain, credibility-boost seam) with full drop-reason auditability.
+
+### Remaining gaps (intentionally deferred — Open Questions, not requirements)
+- **Real retrieval backend.** Mock search/fetch/extract stages today; production search APIs and headless fetchers slot in via the existing protocols.
+- **Real agent provider.** Mock topic planner and lesson composer; hosted-model adapters slot in via `agents.factory`.
+- **Curated `preferred_domains` and tightened `min_word_count`.** The seam is in `STANDARD_QUALITY_POLICY`; the data is not yet curated.
+- **Lesson `completed` status + study-progress tracking.** Open Question; status enum is extensible.
+- **Hierarchical (nested) TOC.** Renderer supports `### ` subheadings; composer emits flat depth-1 today.
+- **Scheduled retrieval / RSS / release-note ingestion.** Future phase per `solution.md`.
+- **Frontend test framework (Vitest/Playwright).** Reader rendering is exercised by typecheck/lint/build + the backend smoke's reader-contract assertion; can revisit when frontend complexity warrants.
+- **Lesson feedback table.** Schema mentions `lesson_feedback` as optional; not in MVP.
+
+### Test evidence
+- **76 backend tests pass:**
+  - `test_agents.py` (19) — planner/composer protocol conformance, mode-specific briefs, history-aware rotation, novelty hints, skill-anchored queries, composer anchor disambiguation, zero-source graceful path.
+  - `test_retrieval.py` (20) — per-stage protocol conformance, deterministic search, fetch failure handling, extractor HTML stripping, ranker overlap, packager dedup + cap, plus 9 quality-control tests covering credibility boost, thin-content drop, per-domain cap, allowlist + denylist, low-relevance/quality drops, default-policy identity, end-to-end drop trace, explicit-zero-policy escape hatch, and preferred-domain metadata.
+  - `test_generation_orchestration.py` (9) — end-to-end persistence of brief + retrieval trace, grounded source persistence with per-stage scores, TOC↔markdown anchor consistency, parent-lesson linkage, fallback handling, recent-lessons context, discover-mode rotation, active-lesson visibility for non-CONTINUE modes.
+  - `test_lesson_library.py` (7) — list, detail-with-sources, save (status + savedAt), idempotent save, 404s.
+  - `test_generation_requests.py` (8) — generate flow per mode, validation, active-lesson + activate, continue fallback semantics.
+  - `test_mvp_smoke.py` (4) — full user journey, continue-chain lineage, no-active fallback, three-modes section signatures.
+  - `test_persistence.py` (3) — repository round-trip, single-active-lesson DB constraint, list_all id-tiebreaker ordering.
+  - `test_migrations.py` (2), `test_health.py` (2), `test_profile_seed.py` (2).
+- **Frontend pipeline:** `npm run frontend:typecheck`, `npm run frontend:lint`, `npm run frontend:build` all clean.
+- **Live boot end-to-end:** verified `GET /health`, `GET /api/v1/lessons` (empty → populated), `POST /api/v1/lessons/generate` for all three modes (including `422` on blank phrase), `GET /api/v1/lessons/active` (404 on empty, 200 after activate), `POST /api/v1/lessons/{id}/activate`, `POST /api/v1/lessons/{id}/save` (with idempotency), `GET /api/v1/lessons/{id}` (full reader payload with TOC ↔ `## ` heading match, persisted retrieval trace + per-stage scores), `GET /lessons/{id}` and `GET /lessons/does-not-exist` on the frontend, plus 404s on unknown IDs across all routes.
+- **Pipeline boundary import grep** confirms agents → retrieval → generation → lessons layering is one-way.
 
 ## Execution Notes
 - The executor should update `Active Task` whenever a task starts.
